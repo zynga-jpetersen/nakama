@@ -29,16 +29,16 @@ import (
 	"google.golang.org/grpc/codes"
 )
 
-const LTSentinel = lua.LValueType(-1)
-
-type LSentinelType struct {
-	lua.LNilType
-}
-
-func (s *LSentinelType) String() string       { return "" }
-func (s *LSentinelType) Type() lua.LValueType { return LTSentinel }
-
-var LSentinel = lua.LValue(&LSentinelType{})
+//const LTSentinel = lua.LValueType(-1)
+//
+//type LSentinelType struct {
+//	lua.LNilType
+//}
+//
+//func (s *LSentinelType) String() string       { return "" }
+//func (s *LSentinelType) Type() lua.LValueType { return LTSentinel }
+//
+//var LSentinel = lua.LValue(&LSentinelType{})
 
 type RuntimeModule struct {
 	Name    string
@@ -166,7 +166,7 @@ func newVM(logger *zap.Logger, db *sql.DB, config Config, socialClient *social.C
 	r := &Runtime{
 		logger: logger,
 		vm:     vm,
-		luaEnv: ConvertMap(vm, config.GetRuntime().Environment),
+		luaEnv: RuntimeLuaConvertMapString(vm, config.GetRuntime().Environment),
 	}
 
 	return r, r.loadModules(moduleCache)

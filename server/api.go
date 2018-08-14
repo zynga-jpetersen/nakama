@@ -35,7 +35,7 @@ import (
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
-	"github.com/grpc-ecosystem/grpc-gateway/runtime"
+	grpcRuntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/heroiclabs/nakama/api"
 	"github.com/heroiclabs/nakama/social"
 	"go.opencensus.io/plugin/ocgrpc"
@@ -68,12 +68,13 @@ type ApiServer struct {
 	matchRegistry     MatchRegistry
 	tracker           Tracker
 	router            MessageRouter
+	runtime           *Runtime2
 	runtimePool       *RuntimePool
 	grpcServer        *grpc.Server
 	grpcGatewayServer *http.Server
 }
 
-func StartApiServer(logger *zap.Logger, startupLogger *zap.Logger, db *sql.DB, jsonpbMarshaler *jsonpb.Marshaler, jsonpbUnmarshaler *jsonpb.Unmarshaler, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, matchmaker Matchmaker, tracker Tracker, router MessageRouter, pipeline *Pipeline, runtimePool *RuntimePool) *ApiServer {
+func StartApiServer(logger *zap.Logger, startupLogger *zap.Logger, db *sql.DB, jsonpbMarshaler *jsonpb.Marshaler, jsonpbUnmarshaler *jsonpb.Unmarshaler, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, matchmaker Matchmaker, tracker Tracker, router MessageRouter, pipeline *Pipeline, runtime *Runtime2, runtimePool *RuntimePool) *ApiServer {
 	serverOpts := []grpc.ServerOption{
 		grpc.StatsHandler(&ocgrpc.ServerHandler{IsPublicEndpoint: true}),
 		grpc.MaxRecvMsgSize(int(config.GetSocket().MaxMessageSizeBytes)),
@@ -93,6 +94,7 @@ func StartApiServer(logger *zap.Logger, startupLogger *zap.Logger, db *sql.DB, j
 		matchRegistry:    matchRegistry,
 		tracker:          tracker,
 		router:           router,
+		runtime:          runtime,
 		runtimePool:      runtimePool,
 		grpcServer:       grpcServer,
 	}
@@ -114,8 +116,8 @@ func StartApiServer(logger *zap.Logger, startupLogger *zap.Logger, db *sql.DB, j
 	// Register and start GRPC Gateway server.
 	// Should start after GRPC server itself because RegisterNakamaHandlerFromEndpoint below tries to dial GRPC.
 	ctx := context.Background()
-	grpcGateway := runtime.NewServeMux(
-		runtime.WithMetadata(func(ctx context.Context, r *http.Request) metadata.MD {
+	grpcGateway := grpcRuntime.NewServeMux(
+		grpcRuntime.WithMetadata(func(ctx context.Context, r *http.Request) metadata.MD {
 			// For RPC GET operations pass through any custom query parameters.
 			if r.Method != "GET" || !strings.HasPrefix(r.URL.Path, "/v2/rpc/") {
 				return metadata.MD{}

@@ -40,11 +40,12 @@ type Pipeline struct {
 	matchmaker        Matchmaker
 	tracker           Tracker
 	router            MessageRouter
+	runtime           *Runtime2
 	runtimePool       *RuntimePool
 	node              string
 }
 
-func NewPipeline(config Config, db *sql.DB, jsonpbMarshaler *jsonpb.Marshaler, jsonpbUnmarshaler *jsonpb.Unmarshaler, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, matchmaker Matchmaker, tracker Tracker, router MessageRouter, runtimePool *RuntimePool) *Pipeline {
+func NewPipeline(config Config, db *sql.DB, jsonpbMarshaler *jsonpb.Marshaler, jsonpbUnmarshaler *jsonpb.Unmarshaler, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, matchmaker Matchmaker, tracker Tracker, router MessageRouter, runtime *Runtime2, runtimePool *RuntimePool) *Pipeline {
 	return &Pipeline{
 		config:            config,
 		db:                db,
@@ -55,6 +56,7 @@ func NewPipeline(config Config, db *sql.DB, jsonpbMarshaler *jsonpb.Marshaler, j
 		matchmaker:        matchmaker,
 		tracker:           tracker,
 		router:            router,
+		runtime:           runtime,
 		runtimePool:       runtimePool,
 		node:              config.GetName(),
 	}

@@ -16,32 +16,17 @@ package server
 
 import (
 	"context"
-	"fmt"
-	"io"
-	"net/http"
-	"time"
-
-	"strings"
-
-	"database/sql"
-
-	"encoding/json"
-
-	"encoding/base64"
-
-	"encoding/hex"
-	"io/ioutil"
-
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
-	"sync"
-
 	"crypto/hmac"
-	"crypto/sha256"
-
 	"crypto/md5"
-
+	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"github.com/gofrs/uuid"
 	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/golang/protobuf/ptypes/wrappers"
@@ -52,21 +37,26 @@ import (
 	"github.com/yuin/gopher-lua"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
+	"io"
+	"io/ioutil"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
 )
 
-const CALLBACKS = "runtime_callbacks"
+const RUNTIME_LUA_CALLBACKS = "runtime_lua_callbacks"
+const API_PREFIX = "/nakama.api.Nakama/"
+const RTAPI_PREFIX = "*rtapi.Envelope_"
 
-//const API_PREFIX = "/nakama.api.Nakama/"
-//const RTAPI_PREFIX = "*rtapi.Envelope_"
-
-type Callbacks struct {
+type RuntimeLuaCallbacks struct {
 	RPC        map[string]*lua.LFunction
 	Before     map[string]*lua.LFunction
 	After      map[string]*lua.LFunction
 	Matchmaker *lua.LFunction
 }
 
-type NakamaModule struct {
+type RuntimeLuaNakamaModule struct {
 	logger           *zap.Logger
 	db               *sql.DB
 	config           Config
@@ -77,17 +67,17 @@ type NakamaModule struct {
 	tracker          Tracker
 	router           MessageRouter
 	once             *sync.Once
-	announceCallback func(ExecutionMode, string)
+	announceCallback func(RuntimeExecutionMode, string)
 	client           *http.Client
 }
 
-func NewNakamaModule(logger *zap.Logger, db *sql.DB, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, l *lua.LState, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, tracker Tracker, router MessageRouter, once *sync.Once, announceCallback func(ExecutionMode, string)) *NakamaModule {
-	l.SetContext(context.WithValue(context.Background(), CALLBACKS, &Callbacks{
+func NewRuntimeLuaNakamaModule(logger *zap.Logger, db *sql.DB, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, l *lua.LState, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, tracker Tracker, router MessageRouter, once *sync.Once, announceCallback func(RuntimeExecutionMode, string)) *RuntimeLuaNakamaModule {
+	l.SetContext(context.WithValue(context.Background(), RUNTIME_LUA_CALLBACKS, &RuntimeLuaCallbacks{
 		RPC:    make(map[string]*lua.LFunction),
 		Before: make(map[string]*lua.LFunction),
 		After:  make(map[string]*lua.LFunction),
 	}))
-	return &NakamaModule{
+	return &RuntimeLuaNakamaModule{
 		logger:           logger,
 		db:               db,
 		config:           config,
@@ -105,7 +95,7 @@ func NewNakamaModule(logger *zap.Logger, db *sql.DB, config Config, socialClient
 	}
 }
 
-func (n *NakamaModule) Loader(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) Loader(l *lua.LState) int {
 	functions := map[string]lua.LGFunction{
 		"register_rpc":                n.registerRPC,
 		"register_req_before":         n.registerReqBefore,
@@ -191,7 +181,7 @@ func (n *NakamaModule) Loader(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) registerRPC(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) registerRPC(l *lua.LState) int {
 	fn := l.CheckFunction(1)
 	id := l.CheckString(2)
 
@@ -202,19 +192,19 @@ func (n *NakamaModule) registerRPC(l *lua.LState) int {
 
 	id = strings.ToLower(id)
 
-	rc := l.Context().Value(CALLBACKS).(*Callbacks)
+	rc := l.Context().Value(RUNTIME_LUA_CALLBACKS).(*RuntimeLuaCallbacks)
 	if _, ok := rc.RPC[id]; ok {
 		//l.RaiseError("rpc id already registered")
 		return 0
 	}
 	rc.RPC[id] = fn
 	if n.announceCallback != nil {
-		n.announceCallback(ExecutionModeRPC, id)
+		n.announceCallback(RuntimeExecutionModeRPC, id)
 	}
 	return 0
 }
 
-func (n *NakamaModule) registerReqBefore(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) registerReqBefore(l *lua.LState) int {
 	fn := l.CheckFunction(1)
 	id := l.CheckString(2)
 
@@ -225,19 +215,19 @@ func (n *NakamaModule) registerReqBefore(l *lua.LState) int {
 
 	id = strings.ToLower(API_PREFIX + id)
 
-	rc := l.Context().Value(CALLBACKS).(*Callbacks)
+	rc := l.Context().Value(RUNTIME_LUA_CALLBACKS).(*RuntimeLuaCallbacks)
 	if _, ok := rc.Before[id]; ok {
 		//l.RaiseError("before id already registered")
 		return 0
 	}
 	rc.Before[id] = fn
 	if n.announceCallback != nil {
-		n.announceCallback(ExecutionModeBefore, id)
+		n.announceCallback(RuntimeExecutionModeBefore, id)
 	}
 	return 0
 }
 
-func (n *NakamaModule) registerReqAfter(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) registerReqAfter(l *lua.LState) int {
 	fn := l.CheckFunction(1)
 	id := l.CheckString(2)
 
@@ -248,19 +238,19 @@ func (n *NakamaModule) registerReqAfter(l *lua.LState) int {
 
 	id = strings.ToLower(API_PREFIX + id)
 
-	rc := l.Context().Value(CALLBACKS).(*Callbacks)
+	rc := l.Context().Value(RUNTIME_LUA_CALLBACKS).(*RuntimeLuaCallbacks)
 	if _, ok := rc.After[id]; ok {
 		//l.RaiseError("after id already registered")
 		return 0
 	}
 	rc.After[id] = fn
 	if n.announceCallback != nil {
-		n.announceCallback(ExecutionModeAfter, id)
+		n.announceCallback(RuntimeExecutionModeAfter, id)
 	}
 	return 0
 }
 
-func (n *NakamaModule) registerRTBefore(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) registerRTBefore(l *lua.LState) int {
 	fn := l.CheckFunction(1)
 	id := l.CheckString(2)
 
@@ -271,19 +261,19 @@ func (n *NakamaModule) registerRTBefore(l *lua.LState) int {
 
 	id = strings.ToLower(RTAPI_PREFIX + id)
 
-	rc := l.Context().Value(CALLBACKS).(*Callbacks)
+	rc := l.Context().Value(RUNTIME_LUA_CALLBACKS).(*RuntimeLuaCallbacks)
 	if _, ok := rc.Before[id]; ok {
 		//l.RaiseError("before id already registered")
 		return 0
 	}
 	rc.Before[id] = fn
 	if n.announceCallback != nil {
-		n.announceCallback(ExecutionModeBefore, id)
+		n.announceCallback(RuntimeExecutionModeBefore, id)
 	}
 	return 0
 }
 
-func (n *NakamaModule) registerRTAfter(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) registerRTAfter(l *lua.LState) int {
 	fn := l.CheckFunction(1)
 	id := l.CheckString(2)
 
@@ -294,34 +284,34 @@ func (n *NakamaModule) registerRTAfter(l *lua.LState) int {
 
 	id = strings.ToLower(RTAPI_PREFIX + id)
 
-	rc := l.Context().Value(CALLBACKS).(*Callbacks)
+	rc := l.Context().Value(RUNTIME_LUA_CALLBACKS).(*RuntimeLuaCallbacks)
 	if _, ok := rc.After[id]; ok {
 		//l.RaiseError("before id already registered")
 		return 0
 	}
 	rc.After[id] = fn
 	if n.announceCallback != nil {
-		n.announceCallback(ExecutionModeAfter, id)
+		n.announceCallback(RuntimeExecutionModeAfter, id)
 	}
 	return 0
 }
 
-func (n *NakamaModule) registerMatchmakerMatched(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) registerMatchmakerMatched(l *lua.LState) int {
 	fn := l.CheckFunction(1)
 
-	rc := l.Context().Value(CALLBACKS).(*Callbacks)
+	rc := l.Context().Value(RUNTIME_LUA_CALLBACKS).(*RuntimeLuaCallbacks)
 	if rc.Matchmaker != nil {
 		//l.RaiseError("matchmaker matched already registered")
 		return 0
 	}
 	rc.Matchmaker = fn
 	if n.announceCallback != nil {
-		n.announceCallback(ExecutionModeMatchmaker, "")
+		n.announceCallback(RuntimeExecutionModeMatchmaker, "")
 	}
 	return 0
 }
 
-func (n *NakamaModule) runOnce(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) runOnce(l *lua.LState) int {
 	n.once.Do(func() {
 		fn := l.CheckFunction(1)
 		if fn == nil {
@@ -329,7 +319,7 @@ func (n *NakamaModule) runOnce(l *lua.LState) int {
 			return
 		}
 
-		ctx := NewLuaContext(l, RuntimeLuaConvertMapString(l, n.config.GetRuntime().Environment), ExecutionModeRunOnce, nil, 0, "", "", "", "", "")
+		ctx := NewRuntimeLuaContext(l, RuntimeLuaConvertMapString(l, n.config.GetRuntime().Environment), RuntimeExecutionModeRunOnce, nil, 0, "", "", "", "", "")
 
 		l.Push(LSentinel)
 		l.Push(fn)
@@ -352,7 +342,7 @@ func (n *NakamaModule) runOnce(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) time(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) time(l *lua.LState) int {
 	if l.GetTop() == 0 {
 		l.Push(lua.LNumber(time.Now().UTC().UnixNano() / int64(time.Millisecond)))
 	} else {
@@ -375,7 +365,7 @@ func (n *NakamaModule) time(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) cronNext(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) cronNext(l *lua.LState) int {
 	cron := l.CheckString(1)
 	if cron == "" {
 		l.ArgError(1, "expects cron string")
@@ -399,7 +389,7 @@ func (n *NakamaModule) cronNext(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) sqlExec(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) sqlExec(l *lua.LState) int {
 	query := l.CheckString(1)
 	if query == "" {
 		l.ArgError(1, "expects query string")
@@ -409,7 +399,7 @@ func (n *NakamaModule) sqlExec(l *lua.LState) int {
 	var params []interface{}
 	if paramsTable != nil && paramsTable.Len() != 0 {
 		var ok bool
-		params, ok = ConvertLuaValue(paramsTable).([]interface{})
+		params, ok = RuntimeLuaConvertLuaValue(paramsTable).([]interface{})
 		if !ok {
 			l.ArgError(2, "expects a list of params as a table")
 			return 0
@@ -431,7 +421,7 @@ func (n *NakamaModule) sqlExec(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) sqlQuery(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) sqlQuery(l *lua.LState) int {
 	query := l.CheckString(1)
 	if query == "" {
 		l.ArgError(1, "expects query string")
@@ -441,7 +431,7 @@ func (n *NakamaModule) sqlQuery(l *lua.LState) int {
 	var params []interface{}
 	if paramsTable != nil && paramsTable.Len() != 0 {
 		var ok bool
-		params, ok = ConvertLuaValue(paramsTable).([]interface{})
+		params, ok = RuntimeLuaConvertLuaValue(paramsTable).([]interface{})
 		if !ok {
 			l.ArgError(2, "expects a list of params as a table")
 			return 0
@@ -483,7 +473,7 @@ func (n *NakamaModule) sqlQuery(l *lua.LState) int {
 	for i, r := range resultRows {
 		rowTable := l.CreateTable(0, resultColumnCount)
 		for j, col := range resultColumns {
-			rowTable.RawSetString(col, ConvertValue(l, r[j]))
+			rowTable.RawSetString(col, RuntimeLuaConvertValue(l, r[j]))
 		}
 		rt.RawSetInt(i+1, rowTable)
 	}
@@ -491,12 +481,12 @@ func (n *NakamaModule) sqlQuery(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) uuidV4(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) uuidV4(l *lua.LState) int {
 	l.Push(lua.LString(uuid.Must(uuid.NewV4()).String()))
 	return 1
 }
 
-func (n *NakamaModule) uuidBytesToString(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) uuidBytesToString(l *lua.LState) int {
 	uuidBytes := l.CheckString(1)
 	if uuidBytes == "" {
 		l.ArgError(1, "expects a UUID byte string")
@@ -511,7 +501,7 @@ func (n *NakamaModule) uuidBytesToString(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) uuidStringToBytes(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) uuidStringToBytes(l *lua.LState) int {
 	uuidString := l.CheckString(1)
 	if uuidString == "" {
 		l.ArgError(1, "expects a UUID string")
@@ -526,7 +516,7 @@ func (n *NakamaModule) uuidStringToBytes(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) httpRequest(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) httpRequest(l *lua.LState) int {
 	url := l.CheckString(1)
 	method := l.CheckString(2)
 	headers := l.CheckTable(3)
@@ -556,7 +546,7 @@ func (n *NakamaModule) httpRequest(l *lua.LState) int {
 		return 0
 	}
 	// Apply any request headers.
-	httpHeaders := ConvertLuaTable(headers)
+	httpHeaders := RuntimeLuaConvertLuaTable(headers)
 	for k, v := range httpHeaders {
 		if vs, ok := v.(string); !ok {
 			l.RaiseError("HTTP header values must be strings")
@@ -589,19 +579,19 @@ func (n *NakamaModule) httpRequest(l *lua.LState) int {
 	}
 
 	l.Push(lua.LNumber(resp.StatusCode))
-	l.Push(ConvertMap(l, responseHeaders))
+	l.Push(RuntimeLuaConvertMap(l, responseHeaders))
 	l.Push(lua.LString(string(responseBody)))
 	return 3
 }
 
-func (n *NakamaModule) jsonEncode(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) jsonEncode(l *lua.LState) int {
 	value := l.Get(1)
 	if value == nil {
 		l.ArgError(1, "expects a non-nil value to encode")
 		return 0
 	}
 
-	jsonData := ConvertLuaValue(value)
+	jsonData := RuntimeLuaConvertLuaValue(value)
 	jsonBytes, err := json.Marshal(jsonData)
 	if err != nil {
 		l.RaiseError("error encoding to JSON: %v", err.Error())
@@ -612,7 +602,7 @@ func (n *NakamaModule) jsonEncode(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) jsonDecode(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) jsonDecode(l *lua.LState) int {
 	jsonString := l.CheckString(1)
 	if jsonString == "" {
 		l.ArgError(1, "expects JSON string")
@@ -625,11 +615,11 @@ func (n *NakamaModule) jsonDecode(l *lua.LState) int {
 		return 0
 	}
 
-	l.Push(ConvertValue(l, jsonData))
+	l.Push(RuntimeLuaConvertValue(l, jsonData))
 	return 1
 }
 
-func (n *NakamaModule) base64Encode(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) base64Encode(l *lua.LState) int {
 	input := l.CheckString(1)
 	if input == "" {
 		l.ArgError(1, "expects string")
@@ -647,7 +637,7 @@ func (n *NakamaModule) base64Encode(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) base64Decode(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) base64Decode(l *lua.LState) int {
 	input := l.CheckString(1)
 	if input == "" {
 		l.ArgError(1, "expects string")
@@ -673,7 +663,7 @@ func (n *NakamaModule) base64Decode(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) base64URLEncode(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) base64URLEncode(l *lua.LState) int {
 	input := l.CheckString(1)
 	if input == "" {
 		l.ArgError(1, "expects string")
@@ -691,7 +681,7 @@ func (n *NakamaModule) base64URLEncode(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) base64URLDecode(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) base64URLDecode(l *lua.LState) int {
 	input := l.CheckString(1)
 	if input == "" {
 		l.ArgError(1, "expects string")
@@ -717,7 +707,7 @@ func (n *NakamaModule) base64URLDecode(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) base16Encode(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) base16Encode(l *lua.LState) int {
 	input := l.CheckString(1)
 	if input == "" {
 		l.ArgError(1, "expects string")
@@ -729,7 +719,7 @@ func (n *NakamaModule) base16Encode(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) base16Decode(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) base16Decode(l *lua.LState) int {
 	input := l.CheckString(1)
 	if input == "" {
 		l.ArgError(1, "expects string")
@@ -746,7 +736,7 @@ func (n *NakamaModule) base16Decode(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) aes128Encrypt(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) aes128Encrypt(l *lua.LState) int {
 	input := l.CheckString(1)
 	if input == "" {
 		l.ArgError(1, "expects string")
@@ -783,7 +773,7 @@ func (n *NakamaModule) aes128Encrypt(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) aes128Decrypt(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) aes128Decrypt(l *lua.LState) int {
 	input := l.CheckString(1)
 	if input == "" {
 		l.ArgError(1, "expects string")
@@ -817,7 +807,7 @@ func (n *NakamaModule) aes128Decrypt(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) md5Hash(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) md5Hash(l *lua.LState) int {
 	input := l.CheckString(1)
 	if input == "" {
 		l.ArgError(1, "expects input string")
@@ -830,7 +820,7 @@ func (n *NakamaModule) md5Hash(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) sha256Hash(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) sha256Hash(l *lua.LState) int {
 	input := l.CheckString(1)
 	if input == "" {
 		l.ArgError(1, "expects input string")
@@ -843,7 +833,7 @@ func (n *NakamaModule) sha256Hash(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) hmacSHA256Hash(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) hmacSHA256Hash(l *lua.LState) int {
 	input := l.CheckString(1)
 	if input == "" {
 		l.ArgError(1, "expects input string")
@@ -866,7 +856,7 @@ func (n *NakamaModule) hmacSHA256Hash(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) bcryptHash(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) bcryptHash(l *lua.LState) int {
 	input := l.CheckString(1)
 	if input == "" {
 		l.ArgError(1, "expects string")
@@ -883,7 +873,7 @@ func (n *NakamaModule) bcryptHash(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) bcryptCompare(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) bcryptCompare(l *lua.LState) int {
 	hash := l.CheckString(1)
 	if hash == "" {
 		l.ArgError(1, "expects string")
@@ -908,7 +898,7 @@ func (n *NakamaModule) bcryptCompare(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) authenticateCustom(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) authenticateCustom(l *lua.LState) int {
 	// Parse ID.
 	id := l.CheckString(1)
 	if id == "" {
@@ -949,7 +939,7 @@ func (n *NakamaModule) authenticateCustom(l *lua.LState) int {
 	return 3
 }
 
-func (n *NakamaModule) authenticateDevice(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) authenticateDevice(l *lua.LState) int {
 	// Parse ID.
 	id := l.CheckString(1)
 	if id == "" {
@@ -990,7 +980,7 @@ func (n *NakamaModule) authenticateDevice(l *lua.LState) int {
 	return 3
 }
 
-func (n *NakamaModule) authenticateEmail(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) authenticateEmail(l *lua.LState) int {
 	// Parse email.
 	email := l.CheckString(1)
 	if email == "" {
@@ -1046,7 +1036,7 @@ func (n *NakamaModule) authenticateEmail(l *lua.LState) int {
 	return 3
 }
 
-func (n *NakamaModule) authenticateFacebook(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) authenticateFacebook(l *lua.LState) int {
 	// Parse access token.
 	token := l.CheckString(1)
 	if token == "" {
@@ -1089,7 +1079,7 @@ func (n *NakamaModule) authenticateFacebook(l *lua.LState) int {
 	return 3
 }
 
-func (n *NakamaModule) authenticateGameCenter(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) authenticateGameCenter(l *lua.LState) int {
 	// Parse authentication credentials.
 	playerID := l.CheckString(1)
 	if playerID == "" {
@@ -1149,7 +1139,7 @@ func (n *NakamaModule) authenticateGameCenter(l *lua.LState) int {
 	return 3
 }
 
-func (n *NakamaModule) authenticateGoogle(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) authenticateGoogle(l *lua.LState) int {
 	// Parse ID token.
 	token := l.CheckString(1)
 	if token == "" {
@@ -1184,7 +1174,7 @@ func (n *NakamaModule) authenticateGoogle(l *lua.LState) int {
 	return 3
 }
 
-func (n *NakamaModule) authenticateSteam(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) authenticateSteam(l *lua.LState) int {
 	if n.config.GetSocial().Steam.PublisherKey == "" || n.config.GetSocial().Steam.AppID == 0 {
 		l.RaiseError("Steam authentication is not configured")
 		return 0
@@ -1224,7 +1214,7 @@ func (n *NakamaModule) authenticateSteam(l *lua.LState) int {
 	return 3
 }
 
-func (n *NakamaModule) authenticateTokenGenerate(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) authenticateTokenGenerate(l *lua.LState) int {
 	// Parse input User ID.
 	userIDString := l.CheckString(1)
 	if userIDString == "" {
@@ -1256,7 +1246,7 @@ func (n *NakamaModule) authenticateTokenGenerate(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) loggerInfo(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) loggerInfo(l *lua.LState) int {
 	message := l.CheckString(1)
 	if message == "" {
 		l.ArgError(1, "expects message string")
@@ -1267,7 +1257,7 @@ func (n *NakamaModule) loggerInfo(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) loggerWarn(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) loggerWarn(l *lua.LState) int {
 	message := l.CheckString(1)
 	if message == "" {
 		l.ArgError(1, "expects message string")
@@ -1278,7 +1268,7 @@ func (n *NakamaModule) loggerWarn(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) loggerError(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) loggerError(l *lua.LState) int {
 	message := l.CheckString(1)
 	if message == "" {
 		l.ArgError(1, "expects message string")
@@ -1289,7 +1279,7 @@ func (n *NakamaModule) loggerError(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) accountGetId(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) accountGetId(l *lua.LState) int {
 	input := l.CheckString(1)
 	if input == "" {
 		l.ArgError(1, "invalid user id")
@@ -1338,7 +1328,7 @@ func (n *NakamaModule) accountGetId(l *lua.LState) int {
 		l.RaiseError(fmt.Sprintf("failed to convert metadata to json: %s", err.Error()))
 		return 0
 	}
-	metadataTable := ConvertMap(l, metadataMap)
+	metadataTable := RuntimeLuaConvertMap(l, metadataMap)
 	accountTable.RawSetString("metadata", metadataTable)
 
 	walletMap := make(map[string]interface{})
@@ -1347,7 +1337,7 @@ func (n *NakamaModule) accountGetId(l *lua.LState) int {
 		l.RaiseError(fmt.Sprintf("failed to convert wallet to json: %s", err.Error()))
 		return 0
 	}
-	walletTable := ConvertMap(l, walletMap)
+	walletTable := RuntimeLuaConvertMap(l, walletMap)
 	accountTable.RawSetString("wallet", walletTable)
 
 	if account.Email != "" {
@@ -1373,7 +1363,7 @@ func (n *NakamaModule) accountGetId(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) usersGetId(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) usersGetId(l *lua.LState) int {
 	// Input table validation.
 	input := l.OptTable(1, nil)
 	if input == nil {
@@ -1384,7 +1374,7 @@ func (n *NakamaModule) usersGetId(l *lua.LState) int {
 		l.Push(l.CreateTable(0, 0))
 		return 1
 	}
-	userIDs, ok := ConvertLuaValue(input).([]interface{})
+	userIDs, ok := RuntimeLuaConvertLuaValue(input).([]interface{})
 	if !ok {
 		l.ArgError(1, "invalid user id data")
 		return 0
@@ -1449,7 +1439,7 @@ func (n *NakamaModule) usersGetId(l *lua.LState) int {
 			l.RaiseError(fmt.Sprintf("failed to convert metadata to json: %s", err.Error()))
 			return 0
 		}
-		metadataTable := ConvertMap(l, metadataMap)
+		metadataTable := RuntimeLuaConvertMap(l, metadataMap)
 		ut.RawSetString("metadata", metadataTable)
 
 		usersTable.RawSetInt(i+1, ut)
@@ -1459,7 +1449,7 @@ func (n *NakamaModule) usersGetId(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) usersGetUsername(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) usersGetUsername(l *lua.LState) int {
 	// Input table validation.
 	input := l.OptTable(1, nil)
 	if input == nil {
@@ -1470,7 +1460,7 @@ func (n *NakamaModule) usersGetUsername(l *lua.LState) int {
 		l.Push(l.CreateTable(0, 0))
 		return 1
 	}
-	usernames, ok := ConvertLuaValue(input).([]interface{})
+	usernames, ok := RuntimeLuaConvertLuaValue(input).([]interface{})
 	if !ok {
 		l.ArgError(1, "invalid username data")
 		return 0
@@ -1532,7 +1522,7 @@ func (n *NakamaModule) usersGetUsername(l *lua.LState) int {
 			l.RaiseError(fmt.Sprintf("failed to convert metadata to json: %s", err.Error()))
 			return 0
 		}
-		metadataTable := ConvertMap(l, metadataMap)
+		metadataTable := RuntimeLuaConvertMap(l, metadataMap)
 		ut.RawSetString("metadata", metadataTable)
 
 		usersTable.RawSetInt(i+1, ut)
@@ -1542,7 +1532,7 @@ func (n *NakamaModule) usersGetUsername(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) usersBanId(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) usersBanId(l *lua.LState) int {
 	// Input table validation.
 	input := l.OptTable(1, nil)
 	if input == nil {
@@ -1552,7 +1542,7 @@ func (n *NakamaModule) usersBanId(l *lua.LState) int {
 	if input.Len() == 0 {
 		return 0
 	}
-	userIDs, ok := ConvertLuaValue(input).([]interface{})
+	userIDs, ok := RuntimeLuaConvertLuaValue(input).([]interface{})
 	if !ok {
 		l.ArgError(1, "invalid user id data")
 		return 0
@@ -1585,7 +1575,7 @@ func (n *NakamaModule) usersBanId(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) usersUnbanId(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) usersUnbanId(l *lua.LState) int {
 	// Input table validation.
 	input := l.OptTable(1, nil)
 	if input == nil {
@@ -1595,7 +1585,7 @@ func (n *NakamaModule) usersUnbanId(l *lua.LState) int {
 	if input.Len() == 0 {
 		return 0
 	}
-	userIDs, ok := ConvertLuaValue(input).([]interface{})
+	userIDs, ok := RuntimeLuaConvertLuaValue(input).([]interface{})
 	if !ok {
 		l.ArgError(1, "invalid user id data")
 		return 0
@@ -1628,7 +1618,7 @@ func (n *NakamaModule) usersUnbanId(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) streamUserList(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) streamUserList(l *lua.LState) int {
 	// Parse input stream identifier.
 	streamTable := l.CheckTable(1)
 	if streamTable == nil {
@@ -1705,7 +1695,7 @@ func (n *NakamaModule) streamUserList(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) streamUserGet(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) streamUserGet(l *lua.LState) int {
 	// Parse input User ID.
 	userIDString := l.CheckString(1)
 	if userIDString == "" {
@@ -1804,7 +1794,7 @@ func (n *NakamaModule) streamUserGet(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) streamUserJoin(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) streamUserJoin(l *lua.LState) int {
 	// Parse input User ID.
 	userIDString := l.CheckString(1)
 	if userIDString == "" {
@@ -1919,7 +1909,7 @@ func (n *NakamaModule) streamUserJoin(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) streamUserUpdate(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) streamUserUpdate(l *lua.LState) int {
 	// Parse input User ID.
 	userIDString := l.CheckString(1)
 	if userIDString == "" {
@@ -2031,7 +2021,7 @@ func (n *NakamaModule) streamUserUpdate(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) streamUserLeave(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) streamUserLeave(l *lua.LState) int {
 	// Parse input User ID.
 	userIDString := l.CheckString(1)
 	if userIDString == "" {
@@ -2121,7 +2111,7 @@ func (n *NakamaModule) streamUserLeave(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) streamCount(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) streamCount(l *lua.LState) int {
 	// Parse input stream identifier.
 	streamTable := l.CheckTable(1)
 	if streamTable == nil {
@@ -2188,7 +2178,7 @@ func (n *NakamaModule) streamCount(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) streamClose(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) streamClose(l *lua.LState) int {
 	// Parse input stream identifier.
 	streamTable := l.CheckTable(1)
 	if streamTable == nil {
@@ -2254,7 +2244,7 @@ func (n *NakamaModule) streamClose(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) streamSend(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) streamSend(l *lua.LState) int {
 	// Parse input stream identifier.
 	streamTable := l.CheckTable(1)
 	if streamTable == nil {
@@ -2338,7 +2328,7 @@ func (n *NakamaModule) streamSend(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) matchCreate(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) matchCreate(l *lua.LState) int {
 	// Parse the name of the Lua module that should handle the match.
 	name := l.CheckString(1)
 	if name == "" {
@@ -2346,7 +2336,7 @@ func (n *NakamaModule) matchCreate(l *lua.LState) int {
 		return 0
 	}
 
-	params := ConvertLuaValue(l.Get(2))
+	params := RuntimeLuaConvertLuaValue(l.Get(2))
 
 	// Start the match.
 	mh, err := n.matchRegistry.NewMatch(name, params)
@@ -2360,7 +2350,7 @@ func (n *NakamaModule) matchCreate(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) matchList(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) matchList(l *lua.LState) int {
 	// Parse limit.
 	limit := l.OptInt(1, 1)
 
@@ -2423,7 +2413,7 @@ func (n *NakamaModule) matchList(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) notificationSend(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) notificationSend(l *lua.LState) int {
 	u := l.CheckString(1)
 	userID, err := uuid.FromString(u)
 	if err != nil {
@@ -2437,7 +2427,7 @@ func (n *NakamaModule) notificationSend(l *lua.LState) int {
 		return 0
 	}
 
-	contentMap := ConvertLuaTable(l.CheckTable(3))
+	contentMap := RuntimeLuaConvertLuaTable(l.CheckTable(3))
 	contentBytes, err := json.Marshal(contentMap)
 	if err != nil {
 		l.ArgError(1, fmt.Sprintf("failed to convert content: %s", err.Error()))
@@ -2456,7 +2446,7 @@ func (n *NakamaModule) notificationSend(l *lua.LState) int {
 	if s != "" {
 		suid, err := uuid.FromString(s)
 		if err != nil {
-			l.ArgError(5, "expects sender)id to either be not set, empty string or a valid UUID")
+			l.ArgError(5, "expects sender_id to either be not set, empty string or a valid UUID")
 			return 0
 		}
 		senderID = suid.String()
@@ -2484,7 +2474,7 @@ func (n *NakamaModule) notificationSend(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) notificationsSend(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) notificationsSend(l *lua.LState) int {
 	notificationsTable := l.CheckTable(1)
 	if notificationsTable == nil {
 		l.ArgError(1, "expects a valid set of notifications")
@@ -2535,7 +2525,7 @@ func (n *NakamaModule) notificationsSend(l *lua.LState) int {
 					return
 				}
 
-				contentMap := ConvertLuaTable(v.(*lua.LTable))
+				contentMap := RuntimeLuaConvertLuaTable(v.(*lua.LTable))
 				contentBytes, err := json.Marshal(contentMap)
 				if err != nil {
 					conversionError = true
@@ -2637,7 +2627,7 @@ func (n *NakamaModule) notificationsSend(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) walletUpdate(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) walletUpdate(l *lua.LState) int {
 	// Parse user ID.
 	uid := l.CheckString(1)
 	if uid == "" {
@@ -2656,13 +2646,13 @@ func (n *NakamaModule) walletUpdate(l *lua.LState) int {
 		l.ArgError(2, "expects a table as changeset value")
 		return 0
 	}
-	changesetMap := ConvertLuaTable(changesetTable)
+	changesetMap := RuntimeLuaConvertLuaTable(changesetTable)
 
 	// Parse metadata, optional.
 	metadataBytes := []byte("{}")
 	metadataTable := l.OptTable(3, nil)
 	if metadataTable != nil {
-		metadataMap := ConvertLuaTable(metadataTable)
+		metadataMap := RuntimeLuaConvertLuaTable(metadataTable)
 		metadataBytes, err = json.Marshal(metadataMap)
 		if err != nil {
 			l.ArgError(3, fmt.Sprintf("failed to convert metadata: %s", err.Error()))
@@ -2680,7 +2670,7 @@ func (n *NakamaModule) walletUpdate(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) walletsUpdate(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) walletsUpdate(l *lua.LState) int {
 	updatesTable := l.CheckTable(1)
 	if updatesTable == nil {
 		l.ArgError(1, "expects a valid set of updates")
@@ -2731,14 +2721,14 @@ func (n *NakamaModule) walletsUpdate(l *lua.LState) int {
 					l.ArgError(1, "expects changeset to be table")
 					return
 				}
-				update.Changeset = ConvertLuaTable(v.(*lua.LTable))
+				update.Changeset = RuntimeLuaConvertLuaTable(v.(*lua.LTable))
 			case "metadata":
 				if v.Type() != lua.LTTable {
 					conversionError = true
 					l.ArgError(1, "expects metadata to be table")
 					return
 				}
-				metadataMap := ConvertLuaTable(v.(*lua.LTable))
+				metadataMap := RuntimeLuaConvertLuaTable(v.(*lua.LTable))
 				metadataBytes, err := json.Marshal(metadataMap)
 				if err != nil {
 					conversionError = true
@@ -2776,7 +2766,7 @@ func (n *NakamaModule) walletsUpdate(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) walletLedgerUpdate(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) walletLedgerUpdate(l *lua.LState) int {
 	// Parse ledger ID.
 	id := l.CheckString(1)
 	if id == "" {
@@ -2795,7 +2785,7 @@ func (n *NakamaModule) walletLedgerUpdate(l *lua.LState) int {
 		l.ArgError(2, "expects a table as metadata value")
 		return 0
 	}
-	metadataMap := ConvertLuaTable(metadataTable)
+	metadataMap := RuntimeLuaConvertLuaTable(metadataTable)
 	metadataBytes, err := json.Marshal(metadataMap)
 	if err != nil {
 		l.ArgError(2, fmt.Sprintf("failed to convert metadata: %s", err.Error()))
@@ -2805,6 +2795,7 @@ func (n *NakamaModule) walletLedgerUpdate(l *lua.LState) int {
 	item, err := UpdateWalletLedger(n.logger, n.db, itemID, string(metadataBytes))
 	if err != nil {
 		l.RaiseError(fmt.Sprintf("failed to update user wallet ledger: %s", err.Error()))
+		return 0
 	}
 
 	itemTable := l.CreateTable(0, 6)
@@ -2813,7 +2804,7 @@ func (n *NakamaModule) walletLedgerUpdate(l *lua.LState) int {
 	itemTable.RawSetString("create_time", lua.LNumber(item.CreateTime))
 	itemTable.RawSetString("update_time", lua.LNumber(item.UpdateTime))
 
-	changesetTable := ConvertMap(l, item.Changeset)
+	changesetTable := RuntimeLuaConvertMap(l, item.Changeset)
 	itemTable.RawSetString("changeset", changesetTable)
 
 	itemTable.RawSetString("metadata", metadataTable)
@@ -2822,7 +2813,7 @@ func (n *NakamaModule) walletLedgerUpdate(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) walletLedgerList(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) walletLedgerList(l *lua.LState) int {
 	// Parse user ID.
 	uid := l.CheckString(1)
 	if uid == "" {
@@ -2849,10 +2840,10 @@ func (n *NakamaModule) walletLedgerList(l *lua.LState) int {
 		itemTable.RawSetString("create_time", lua.LNumber(item.CreateTime))
 		itemTable.RawSetString("update_time", lua.LNumber(item.UpdateTime))
 
-		changesetTable := ConvertMap(l, item.Changeset)
+		changesetTable := RuntimeLuaConvertMap(l, item.Changeset)
 		itemTable.RawSetString("changeset", changesetTable)
 
-		metadataTable := ConvertMap(l, item.Metadata)
+		metadataTable := RuntimeLuaConvertMap(l, item.Metadata)
 		itemTable.RawSetString("metadata", metadataTable)
 
 		itemsTable.RawSetInt(i+1, itemTable)
@@ -2862,7 +2853,7 @@ func (n *NakamaModule) walletLedgerList(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) storageList(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) storageList(l *lua.LState) int {
 	userIDString := l.OptString(1, "")
 	collection := l.OptString(2, "")
 	limit := l.CheckInt(3)
@@ -2906,7 +2897,7 @@ func (n *NakamaModule) storageList(l *lua.LState) int {
 			l.RaiseError(fmt.Sprintf("failed to convert value to json: %s", err.Error()))
 			return 0
 		}
-		valueTable := ConvertMap(l, valueMap)
+		valueTable := RuntimeLuaConvertMap(l, valueMap)
 		vt.RawSetString("value", valueTable)
 
 		lv.RawSetInt(i+1, vt)
@@ -2922,7 +2913,7 @@ func (n *NakamaModule) storageList(l *lua.LState) int {
 	return 2
 }
 
-func (n *NakamaModule) storageRead(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) storageRead(l *lua.LState) int {
 	keysTable := l.CheckTable(1)
 	if keysTable == nil {
 		l.ArgError(1, "expects a valid set of keys")
@@ -3049,7 +3040,7 @@ func (n *NakamaModule) storageRead(l *lua.LState) int {
 			l.RaiseError(fmt.Sprintf("failed to convert value to json: %s", err.Error()))
 			return 0
 		}
-		valueTable := ConvertMap(l, valueMap)
+		valueTable := RuntimeLuaConvertMap(l, valueMap)
 		vt.RawSetString("value", valueTable)
 
 		lv.RawSetInt(i+1, vt)
@@ -3058,7 +3049,7 @@ func (n *NakamaModule) storageRead(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) storageWrite(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) storageWrite(l *lua.LState) int {
 	dataTable := l.CheckTable(1)
 	if dataTable == nil {
 		l.ArgError(1, "expects a valid set of data")
@@ -3135,7 +3126,7 @@ func (n *NakamaModule) storageWrite(l *lua.LState) int {
 					l.ArgError(1, "expects value to be table")
 					return
 				}
-				valueMap := ConvertLuaTable(v.(*lua.LTable))
+				valueMap := RuntimeLuaConvertLuaTable(v.(*lua.LTable))
 				valueBytes, err := json.Marshal(valueMap)
 				if err != nil {
 					conversionError = true
@@ -3233,7 +3224,7 @@ func (n *NakamaModule) storageWrite(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) storageDelete(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) storageDelete(l *lua.LState) int {
 	keysTable := l.CheckTable(1)
 	if keysTable == nil {
 		l.ArgError(1, "expects a valid set of object IDs")
@@ -3349,7 +3340,7 @@ func (n *NakamaModule) storageDelete(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) leaderboardCreate(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) leaderboardCreate(l *lua.LState) int {
 	id := l.CheckString(1)
 	if id == "" {
 		l.ArgError(1, "expects a leaderboard ID string")
@@ -3395,7 +3386,7 @@ func (n *NakamaModule) leaderboardCreate(l *lua.LState) int {
 	metadata := l.OptTable(6, nil)
 	metadataStr := "{}"
 	if metadata != nil {
-		metadataMap := ConvertLuaTable(metadata)
+		metadataMap := RuntimeLuaConvertLuaTable(metadata)
 		metadataBytes, err := json.Marshal(metadataMap)
 		if err != nil {
 			l.RaiseError("error encoding metadata: %v", err.Error())
@@ -3410,7 +3401,7 @@ func (n *NakamaModule) leaderboardCreate(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) leaderboardDelete(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) leaderboardDelete(l *lua.LState) int {
 	id := l.CheckString(1)
 	if id == "" {
 		l.ArgError(1, "expects a leaderboard ID string")
@@ -3423,7 +3414,7 @@ func (n *NakamaModule) leaderboardDelete(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) leaderboardRecordsList(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) leaderboardRecordsList(l *lua.LState) int {
 	id := l.CheckString(1)
 	if id == "" {
 		l.ArgError(1, "expects a leaderboard ID string")
@@ -3502,7 +3493,7 @@ func (n *NakamaModule) leaderboardRecordsList(l *lua.LState) int {
 			l.RaiseError(fmt.Sprintf("failed to convert metadata to json: %s", err.Error()))
 			return 0
 		}
-		metadataTable := ConvertMap(l, metadataMap)
+		metadataTable := RuntimeLuaConvertMap(l, metadataMap)
 		recordTable.RawSetString("metadata", metadataTable)
 
 		recordTable.RawSetString("create_time", lua.LNumber(record.CreateTime.Seconds))
@@ -3538,7 +3529,7 @@ func (n *NakamaModule) leaderboardRecordsList(l *lua.LState) int {
 			l.RaiseError(fmt.Sprintf("failed to convert metadata to json: %s", err.Error()))
 			return 0
 		}
-		metadataTable := ConvertMap(l, metadataMap)
+		metadataTable := RuntimeLuaConvertMap(l, metadataMap)
 		recordTable.RawSetString("metadata", metadataTable)
 
 		recordTable.RawSetString("create_time", lua.LNumber(record.CreateTime.Seconds))
@@ -3569,7 +3560,7 @@ func (n *NakamaModule) leaderboardRecordsList(l *lua.LState) int {
 	return 4
 }
 
-func (n *NakamaModule) leaderboardRecordWrite(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) leaderboardRecordWrite(l *lua.LState) int {
 	id := l.CheckString(1)
 	if id == "" {
 		l.ArgError(1, "expects a leaderboard ID string")
@@ -3599,7 +3590,7 @@ func (n *NakamaModule) leaderboardRecordWrite(l *lua.LState) int {
 	metadata := l.OptTable(6, nil)
 	metadataStr := ""
 	if metadata != nil {
-		metadataMap := ConvertLuaTable(metadata)
+		metadataMap := RuntimeLuaConvertLuaTable(metadata)
 		metadataBytes, err := json.Marshal(metadataMap)
 		if err != nil {
 			l.RaiseError("error encoding metadata: %v", err.Error())
@@ -3632,7 +3623,7 @@ func (n *NakamaModule) leaderboardRecordWrite(l *lua.LState) int {
 		l.RaiseError(fmt.Sprintf("failed to convert metadata to json: %s", err.Error()))
 		return 0
 	}
-	metadataTable := ConvertMap(l, metadataMap)
+	metadataTable := RuntimeLuaConvertMap(l, metadataMap)
 	recordTable.RawSetString("metadata", metadataTable)
 
 	recordTable.RawSetString("create_time", lua.LNumber(record.CreateTime.Seconds))
@@ -3647,7 +3638,7 @@ func (n *NakamaModule) leaderboardRecordWrite(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) leaderboardRecordDelete(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) leaderboardRecordDelete(l *lua.LState) int {
 	id := l.CheckString(1)
 	if id == "" {
 		l.ArgError(1, "expects a leaderboard ID string")
@@ -3666,7 +3657,7 @@ func (n *NakamaModule) leaderboardRecordDelete(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) groupCreate(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) groupCreate(l *lua.LState) int {
 	userID, err := uuid.FromString(l.CheckString(1))
 	if err != nil {
 		l.ArgError(1, "expects user ID to be a valid identifier")
@@ -3692,7 +3683,7 @@ func (n *NakamaModule) groupCreate(l *lua.LState) int {
 	metadata := l.OptTable(8, nil)
 	metadataStr := ""
 	if metadata != nil {
-		metadataMap := ConvertLuaTable(metadata)
+		metadataMap := RuntimeLuaConvertLuaTable(metadata)
 		metadataBytes, err := json.Marshal(metadataMap)
 		if err != nil {
 			l.RaiseError("error encoding metadata: %v", err.Error())
@@ -3731,7 +3722,7 @@ func (n *NakamaModule) groupCreate(l *lua.LState) int {
 		l.RaiseError(fmt.Sprintf("failed to convert metadata to json: %s", err.Error()))
 		return 0
 	}
-	metadataTable := ConvertMap(l, metadataMap)
+	metadataTable := RuntimeLuaConvertMap(l, metadataMap)
 	groupTable.RawSetString("metadata", metadataTable)
 	groupTable.RawSetString("open", lua.LBool(group.Open.Value))
 	groupTable.RawSetString("edge_count", lua.LNumber(group.EdgeCount))
@@ -3743,7 +3734,7 @@ func (n *NakamaModule) groupCreate(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) groupUpdate(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) groupUpdate(l *lua.LState) int {
 	groupID, err := uuid.FromString(l.CheckString(1))
 	if err != nil {
 		l.ArgError(1, "expects group ID to be a valid identifier")
@@ -3794,7 +3785,7 @@ func (n *NakamaModule) groupUpdate(l *lua.LState) int {
 	metadataTable := l.OptTable(8, nil)
 	var metadata *wrappers.StringValue
 	if metadataTable != nil {
-		metadataMap := ConvertLuaTable(metadataTable)
+		metadataMap := RuntimeLuaConvertLuaTable(metadataTable)
 		metadataBytes, err := json.Marshal(metadataMap)
 		if err != nil {
 			l.RaiseError("error encoding metadata: %v", err.Error())
@@ -3817,7 +3808,7 @@ func (n *NakamaModule) groupUpdate(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) groupDelete(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) groupDelete(l *lua.LState) int {
 	groupID, err := uuid.FromString(l.CheckString(1))
 	if err != nil {
 		l.ArgError(1, "expects group ID to be a valid identifier")
@@ -3832,7 +3823,7 @@ func (n *NakamaModule) groupDelete(l *lua.LState) int {
 	return 0
 }
 
-func (n *NakamaModule) groupUsersList(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) groupUsersList(l *lua.LState) int {
 	groupID, err := uuid.FromString(l.CheckString(1))
 	if err != nil {
 		l.ArgError(1, "expects group ID to be a valid identifier")
@@ -3880,7 +3871,7 @@ func (n *NakamaModule) groupUsersList(l *lua.LState) int {
 			l.RaiseError(fmt.Sprintf("failed to convert metadata to json: %s", err.Error()))
 			return 0
 		}
-		metadataTable := ConvertMap(l, metadataMap)
+		metadataTable := RuntimeLuaConvertMap(l, metadataMap)
 		ut.RawSetString("metadata", metadataTable)
 
 		gt := l.CreateTable(0, 2)
@@ -3894,7 +3885,7 @@ func (n *NakamaModule) groupUsersList(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) userGroupsList(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) userGroupsList(l *lua.LState) int {
 	userID, err := uuid.FromString(l.CheckString(1))
 	if err != nil {
 		l.ArgError(1, "expects user ID to be a valid identifier")
@@ -3930,7 +3921,7 @@ func (n *NakamaModule) userGroupsList(l *lua.LState) int {
 			l.RaiseError(fmt.Sprintf("failed to convert metadata to json: %s", err.Error()))
 			return 0
 		}
-		metadataTable := ConvertMap(l, metadataMap)
+		metadataTable := RuntimeLuaConvertMap(l, metadataMap)
 		gt.RawSetString("metadata", metadataTable)
 
 		ugt := l.CreateTable(0, 2)
@@ -3944,7 +3935,7 @@ func (n *NakamaModule) userGroupsList(l *lua.LState) int {
 	return 1
 }
 
-func (n *NakamaModule) accountUpdateId(l *lua.LState) int {
+func (n *RuntimeLuaNakamaModule) accountUpdateId(l *lua.LState) int {
 	userID, err := uuid.FromString(l.CheckString(1))
 	if err != nil {
 		l.ArgError(1, "expects user ID to be a valid identifier")
@@ -3954,7 +3945,7 @@ func (n *NakamaModule) accountUpdateId(l *lua.LState) int {
 	metadataTable := l.OptTable(2, nil)
 	var metadata *wrappers.StringValue
 	if metadataTable != nil {
-		metadataMap := ConvertLuaTable(metadataTable)
+		metadataMap := RuntimeLuaConvertLuaTable(metadataTable)
 		metadataBytes, err := json.Marshal(metadataMap)
 		if err != nil {
 			l.RaiseError("error encoding metadata: %v", err.Error())
