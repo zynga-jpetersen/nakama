@@ -18,7 +18,10 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"github.com/golang/protobuf/jsonpb"
+	"github.com/heroiclabs/nakama/rtapi"
 	"github.com/heroiclabs/nakama/social"
 	"github.com/yuin/gopher-lua"
 	"go.opencensus.io/stats"
@@ -65,7 +68,10 @@ func (mc *RuntimeLuaModuleCache) Add(m *RuntimeLuaModule) {
 
 type RuntimeProviderLua struct {
 	sync.Mutex
-	logger       *zap.Logger
+	logger            *zap.Logger
+	jsonpbMarshaler   *jsonpb.Marshaler
+	jsonpbUnmarshaler *jsonpb.Unmarshaler
+
 	poolCh       chan *RuntimeLua
 	maxCount     int
 	currentCount int
@@ -74,7 +80,7 @@ type RuntimeProviderLua struct {
 	statsCtx context.Context
 }
 
-func NewRuntimeProviderLua(logger, startupLogger *zap.Logger, db *sql.DB, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, tracker Tracker, router MessageRouter, rootPath string, paths []string) ([]string, map[string]Runtime2RpcFunction, RuntimeProvider, error) {
+func NewRuntimeProviderLua(logger, startupLogger *zap.Logger, db *sql.DB, jsonpbMarshaler *jsonpb.Marshaler, jsonpbUnmarshaler *jsonpb.Unmarshaler, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, tracker Tracker, router MessageRouter, rootPath string, paths []string) ([]string, map[string]Runtime2RpcFunction, map[string]Runtime2BeforeRtFunction, map[string]Runtime2AfterRtFunction, RuntimeProvider, error) {
 	moduleCache := &RuntimeLuaModuleCache{
 		Names:   make([]string, 0),
 		Modules: make(map[string]*RuntimeLuaModule, 0),
@@ -98,7 +104,7 @@ func NewRuntimeProviderLua(logger, startupLogger *zap.Logger, db *sql.DB, config
 		var err error
 		if content, err = ioutil.ReadFile(path); err != nil {
 			startupLogger.Error("Could not read Lua module", zap.String("path", path), zap.Error(err))
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 
 		relPath, _ := filepath.Rel(rootPath, path)
@@ -125,9 +131,14 @@ func NewRuntimeProviderLua(logger, startupLogger *zap.Logger, db *sql.DB, config
 	}
 	once := &sync.Once{}
 	rpcFunctions := make(map[string]Runtime2RpcFunction, 0)
+	beforeRtFunctions := make(map[string]Runtime2BeforeRtFunction, 0)
+	afterRtFunctions := make(map[string]Runtime2AfterRtFunction, 0)
 
 	runtimeProviderLua := &RuntimeProviderLua{
-		logger:   logger,
+		logger:            logger,
+		jsonpbMarshaler:   jsonpbMarshaler,
+		jsonpbUnmarshaler: jsonpbUnmarshaler,
+
 		poolCh:   make(chan *RuntimeLua, config.GetRuntime().MaxCount),
 		maxCount: config.GetRuntime().MaxCount,
 		// Set the current count assuming we'll warm up the pool in a moment.
@@ -139,6 +150,7 @@ func NewRuntimeProviderLua(logger, startupLogger *zap.Logger, db *sql.DB, config
 			}
 			return r
 		},
+
 		statsCtx: context.Background(),
 	}
 
@@ -151,18 +163,26 @@ func NewRuntimeProviderLua(logger, startupLogger *zap.Logger, db *sql.DB, config
 				return runtimeProviderLua.Rpc(id, queryParams, userID, username, expiry, sessionID, clientIP, clientPort, payload)
 			}
 		case RuntimeExecutionModeBefore:
-			// TODO
-			//logger.Info("Registered Lua runtime Before function invocation", zap.String("id", strings.TrimLeft(strings.TrimLeft(id, API_PREFIX), RTAPI_PREFIX)))
+			if strings.HasPrefix(strings.ToLower(RTAPI_PREFIX), id) {
+				beforeRtFunctions[id] = func(logger *zap.Logger, userID, username string, expiry int64, sessionID, clientIP, clientPort string, envelope *rtapi.Envelope) (*rtapi.Envelope, error) {
+					return runtimeProviderLua.BeforeRt(id, logger, userID, username, expiry, sessionID, clientIP, clientPort, envelope)
+				}
+			}
+			// TODO beforeReq
 		case RuntimeExecutionModeAfter:
-			// TODO
-			//logger.Info("Registered Lua runtime After function invocation", zap.String("id", strings.TrimLeft(strings.TrimLeft(id, API_PREFIX), RTAPI_PREFIX)))
+			if strings.HasPrefix(strings.ToLower(RTAPI_PREFIX), id) {
+				afterRtFunctions[id] = func(logger *zap.Logger, userID, username string, expiry int64, sessionID, clientIP, clientPort string, envelope *rtapi.Envelope) error {
+					return runtimeProviderLua.AfterRt(id, logger, userID, username, expiry, sessionID, clientIP, clientPort, envelope)
+				}
+			}
+			// TODO afterReq
 		case RuntimeExecutionModeMatchmaker:
 			// TODO
 			//logger.Info("Registered Lua runtime Matchmaker Matched function invocation")
 		}
 	})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	r.Stop()
 
@@ -179,7 +199,7 @@ func NewRuntimeProviderLua(logger, startupLogger *zap.Logger, db *sql.DB, config
 	}
 	startupLogger.Info("Allocated minimum runtime pool")
 
-	return modulePaths, rpcFunctions, runtimeProviderLua, nil
+	return modulePaths, rpcFunctions, beforeRtFunctions, afterRtFunctions, runtimeProviderLua, nil
 }
 
 func (rp *RuntimeProviderLua) Rpc(id string, queryParams map[string][]string, userID, username string, expiry int64, sessionID, clientIP, clientPort, payload string) (string, error, codes.Code) {
@@ -190,7 +210,7 @@ func (rp *RuntimeProviderLua) Rpc(id string, queryParams map[string][]string, us
 		return "", ErrRuntimeRPCNotFound, codes.NotFound
 	}
 
-	result, fnErr, code := runtime.InvokeFunction(RuntimeExecutionModeRPC, lf, queryParams, userID, username, expiry, "", clientIP, clientPort, payload)
+	result, fnErr, code := runtime.InvokeFunction(RuntimeExecutionModeRPC, lf, queryParams, userID, username, expiry, sessionID, clientIP, clientPort, payload)
 	rp.Put(runtime)
 
 	if fnErr != nil {
@@ -222,6 +242,113 @@ func (rp *RuntimeProviderLua) Rpc(id string, queryParams map[string][]string, us
 	} else {
 		return payload, nil, 0
 	}
+}
+
+func (rp *RuntimeProviderLua) BeforeRt(id string, logger *zap.Logger, userID, username string, expiry int64, sessionID, clientIP, clientPort string, envelope *rtapi.Envelope) (*rtapi.Envelope, error) {
+	runtime := rp.Get()
+	lf := runtime.GetCallback(RuntimeExecutionModeBefore, id)
+	if lf == nil {
+		rp.Put(runtime)
+		return nil, errors.New("Runtime Before function not found.")
+	}
+
+	envelopeJSON, err := rp.jsonpbMarshaler.MarshalToString(envelope)
+	if err != nil {
+		rp.Put(runtime)
+		logger.Error("Could not marshall envelope to JSON", zap.Any("envelope", envelope), zap.Error(err))
+		return nil, errors.New("Could not run runtime Before function.")
+	}
+	var envelopeMap map[string]interface{}
+	if err := json.Unmarshal([]byte(envelopeJSON), &envelopeMap); err != nil {
+		rp.Put(runtime)
+		logger.Error("Could not unmarshall envelope to interface{}", zap.Any("envelope_json", envelopeJSON), zap.Error(err))
+		return nil, errors.New("Could not run runtime Before function.")
+	}
+
+	result, fnErr, _ := runtime.InvokeFunction(RuntimeExecutionModeBefore, lf, nil, userID, username, expiry, sessionID, clientIP, clientPort, envelopeMap)
+	rp.Put(runtime)
+
+	if fnErr != nil {
+		logger.Error("Runtime Before function caused an error.", zap.String("id", id), zap.Error(fnErr))
+		if apiErr, ok := fnErr.(*lua.ApiError); ok && !logger.Core().Enabled(zapcore.InfoLevel) {
+			msg := apiErr.Object.String()
+			if strings.HasPrefix(msg, lf.Proto.SourceName) {
+				msg = msg[len(lf.Proto.SourceName):]
+				msgParts := strings.SplitN(msg, ": ", 2)
+				if len(msgParts) == 2 {
+					msg = msgParts[1]
+				} else {
+					msg = msgParts[0]
+				}
+			}
+			return nil, errors.New(msg)
+		} else {
+			return nil, fnErr
+		}
+	}
+
+	if result == nil {
+		return nil, nil
+	}
+
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		logger.Error("Could not marshall result to JSON", zap.Any("result", result), zap.Error(err))
+		return nil, errors.New("Could not complete runtime Before function.")
+	}
+
+	if err = rp.jsonpbUnmarshaler.Unmarshal(strings.NewReader(string(resultJSON)), envelope); err != nil {
+		logger.Error("Could not unmarshall result to envelope", zap.Any("result", result), zap.Error(err))
+		return nil, errors.New("Could not complete runtime Before function.")
+	}
+
+	return envelope, nil
+}
+
+func (rp *RuntimeProviderLua) AfterRt(id string, logger *zap.Logger, userID, username string, expiry int64, sessionID, clientIP, clientPort string, envelope *rtapi.Envelope) error {
+	runtime := rp.Get()
+	lf := runtime.GetCallback(RuntimeExecutionModeAfter, id)
+	if lf == nil {
+		rp.Put(runtime)
+		return errors.New("Runtime After function not found.")
+	}
+
+	envelopeJSON, err := rp.jsonpbMarshaler.MarshalToString(envelope)
+	if err != nil {
+		rp.Put(runtime)
+		logger.Error("Could not marshall envelope to JSON", zap.Any("envelope", envelope), zap.Error(err))
+		return errors.New("Could not run runtime After function.")
+	}
+	var envelopeMap map[string]interface{}
+	if err := json.Unmarshal([]byte(envelopeJSON), &envelopeMap); err != nil {
+		rp.Put(runtime)
+		logger.Error("Could not unmarshall envelope to interface{}", zap.Any("envelope_json", envelopeJSON), zap.Error(err))
+		return errors.New("Could not run runtime After function.")
+	}
+
+	_, fnErr, _ := runtime.InvokeFunction(RuntimeExecutionModeAfter, lf, nil, userID, username, expiry, sessionID, clientIP, clientPort, envelopeMap)
+	rp.Put(runtime)
+
+	if fnErr != nil {
+		logger.Error("Runtime After function caused an error.", zap.String("id", id), zap.Error(fnErr))
+		if apiErr, ok := fnErr.(*lua.ApiError); ok && !logger.Core().Enabled(zapcore.InfoLevel) {
+			msg := apiErr.Object.String()
+			if strings.HasPrefix(msg, lf.Proto.SourceName) {
+				msg = msg[len(lf.Proto.SourceName):]
+				msgParts := strings.SplitN(msg, ": ", 2)
+				if len(msgParts) == 2 {
+					msg = msgParts[1]
+				} else {
+					msg = msgParts[0]
+				}
+			}
+			return errors.New(msg)
+		} else {
+			return fnErr
+		}
+	}
+
+	return nil
 }
 
 func (rp *RuntimeProviderLua) Get() *RuntimeLua {

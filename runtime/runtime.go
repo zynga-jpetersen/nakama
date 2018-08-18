@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"github.com/heroiclabs/nakama/api"
+	"github.com/heroiclabs/nakama/rtapi"
 	"log"
 )
 
@@ -39,6 +40,8 @@ const (
 
 type Initialiser interface {
 	RegisterRpc(id string, fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, payload string) (string, error, int)) error
+	RegisterBeforeRt(id string, fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, envelope *rtapi.Envelope) (*rtapi.Envelope, error)) error
+	RegisterAfterRt(id string, fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, envelope *rtapi.Envelope) error) error
 }
 
 type PresenceMeta interface {

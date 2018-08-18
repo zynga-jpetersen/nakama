@@ -16,19 +16,29 @@ package server
 
 import (
 	"database/sql"
+	"github.com/golang/protobuf/jsonpb"
+	"github.com/heroiclabs/nakama/rtapi"
 	"github.com/heroiclabs/nakama/social"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 var (
 	ErrRuntimeRPCNotFound = errors.New("RPC function not found")
 )
 
-type Runtime2RpcFunction func(queryParams map[string][]string, userID, username string, expiry int64, sessionID, clientIP, clientPort, payload string) (string, error, codes.Code)
+const API_PREFIX = "/nakama.api.Nakama/"
+const RTAPI_PREFIX = "*rtapi.Envelope_"
+
+type (
+	Runtime2RpcFunction      func(queryParams map[string][]string, userID, username string, expiry int64, sessionID, clientIP, clientPort, payload string) (string, error, codes.Code)
+	Runtime2BeforeRtFunction func(logger *zap.Logger, userID, username string, expiry int64, sessionID, clientIP, clientPort string, envelope *rtapi.Envelope) (*rtapi.Envelope, error)
+	Runtime2AfterRtFunction  func(logger *zap.Logger, userID, username string, expiry int64, sessionID, clientIP, clientPort string, envelope *rtapi.Envelope) error
+)
 
 type RuntimeExecutionMode int
 
@@ -65,12 +75,15 @@ type RuntimeProvider interface {
 }
 
 type Runtime2 struct {
-	providerGo   RuntimeProvider
-	providerLua  RuntimeProvider
-	rpcFunctions map[string]Runtime2RpcFunction
+	providerGo  RuntimeProvider
+	providerLua RuntimeProvider
+
+	rpcFunctions      map[string]Runtime2RpcFunction
+	beforeRtFunctions map[string]Runtime2BeforeRtFunction
+	afterRtFunctions  map[string]Runtime2AfterRtFunction
 }
 
-func NewRuntime2(logger, startupLogger *zap.Logger, db *sql.DB, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, tracker Tracker, router MessageRouter) (*Runtime2, error) {
+func NewRuntime2(logger, startupLogger *zap.Logger, db *sql.DB, jsonpbMarshaler *jsonpb.Marshaler, jsonpbUnmarshaler *jsonpb.Unmarshaler, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, tracker Tracker, router MessageRouter) (*Runtime2, error) {
 	runtimeConfig := config.GetRuntime()
 	startupLogger.Info("Initialising runtime", zap.String("path", runtimeConfig.Path))
 
@@ -95,13 +108,13 @@ func NewRuntime2(logger, startupLogger *zap.Logger, db *sql.DB, config Config, s
 		return nil, err
 	}
 
-	goModules, goRpcFunctions, goProvider, err := NewRuntimeProviderGo(logger, startupLogger, db, config, socialClient, leaderboardCache, sessionRegistry, matchRegistry, tracker, router, runtimeConfig.Path, paths)
+	goModules, goRpcFunctions, goBeforeRtFunctions, goAfterRtFunctions, goProvider, err := NewRuntimeProviderGo(logger, startupLogger, db, config, socialClient, leaderboardCache, sessionRegistry, matchRegistry, tracker, router, runtimeConfig.Path, paths)
 	if err != nil {
 		startupLogger.Error("Error initialising Go runtime provider", zap.Error(err))
 		return nil, err
 	}
 
-	luaModules, luaRpcFunctions, luaProvider, err := NewRuntimeProviderLua(logger, startupLogger, db, config, socialClient, leaderboardCache, sessionRegistry, matchRegistry, tracker, router, runtimeConfig.Path, paths)
+	luaModules, luaRpcFunctions, luaBeforeRtFunctions, luaAfterRtFunctions, luaProvider, err := NewRuntimeProviderLua(logger, startupLogger, db, jsonpbMarshaler, jsonpbUnmarshaler, config, socialClient, leaderboardCache, sessionRegistry, matchRegistry, tracker, router, runtimeConfig.Path, paths)
 	if err != nil {
 		startupLogger.Error("Error initialising Lua runtime provider", zap.Error(err))
 		return nil, err
@@ -126,13 +139,43 @@ func NewRuntime2(logger, startupLogger *zap.Logger, db *sql.DB, config Config, s
 		startupLogger.Info("Registered Go runtime RPC function invocation", zap.String("id", id))
 	}
 
+	allBeforeRtFunctions := make(map[string]Runtime2BeforeRtFunction, len(goBeforeRtFunctions)+len(luaBeforeRtFunctions))
+	for id, fn := range luaBeforeRtFunctions {
+		allBeforeRtFunctions[id] = fn
+		startupLogger.Info("Registered Lua runtime Before function invocation", zap.String("id", strings.TrimLeft(strings.TrimLeft(id, API_PREFIX), RTAPI_PREFIX)))
+	}
+	for id, fn := range goBeforeRtFunctions {
+		allBeforeRtFunctions[id] = fn
+		startupLogger.Info("Registered Go runtime Before function invocation", zap.String("id", strings.TrimLeft(strings.TrimLeft(id, API_PREFIX), RTAPI_PREFIX)))
+	}
+
+	allAfterRtFunctions := make(map[string]Runtime2AfterRtFunction, len(goAfterRtFunctions)+len(luaAfterRtFunctions))
+	for id, fn := range luaAfterRtFunctions {
+		allAfterRtFunctions[id] = fn
+		startupLogger.Info("Registered Lua runtime After function invocation", zap.String("id", strings.TrimLeft(strings.TrimLeft(id, API_PREFIX), RTAPI_PREFIX)))
+	}
+	for id, fn := range goAfterRtFunctions {
+		allAfterRtFunctions[id] = fn
+		startupLogger.Info("Registered Go runtime After function invocation", zap.String("id", strings.TrimLeft(strings.TrimLeft(id, API_PREFIX), RTAPI_PREFIX)))
+	}
+
 	return &Runtime2{
-		providerGo:   goProvider,
-		providerLua:  luaProvider,
-		rpcFunctions: allRpcFunctions,
+		providerGo:        goProvider,
+		providerLua:       luaProvider,
+		rpcFunctions:      allRpcFunctions,
+		beforeRtFunctions: allBeforeRtFunctions,
+		afterRtFunctions:  allAfterRtFunctions,
 	}, nil
 }
 
 func (r *Runtime2) Rpc(id string) Runtime2RpcFunction {
 	return r.rpcFunctions[id]
+}
+
+func (r *Runtime2) BeforeRt(id string) Runtime2BeforeRtFunction {
+	return r.beforeRtFunctions[id]
+}
+
+func (r *Runtime2) AfterRt(id string) Runtime2AfterRtFunction {
+	return r.afterRtFunctions[id]
 }

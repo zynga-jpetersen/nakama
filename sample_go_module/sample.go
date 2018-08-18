@@ -17,15 +17,22 @@ package main
 import (
 	"context"
 	"database/sql"
+	"github.com/heroiclabs/nakama/rtapi"
 	"github.com/heroiclabs/nakama/runtime"
 	"log"
 )
 
 func InitModule(ctx context.Context, logger *log.Logger, db *sql.DB, nk runtime.NakamaModule, initialiser runtime.Initialiser) {
-	initialiser.RegisterRpc("go_echo_sample", echo)
+	initialiser.RegisterRpc("go_echo_sample", rpcEcho)
+	initialiser.RegisterBeforeRt("ChannelJoin", beforeChannelJoin)
 }
 
-func echo(ctx context.Context, logger *log.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error, int) {
+func rpcEcho(ctx context.Context, logger *log.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error, int) {
 	logger.Print("RUNNING IN GO")
 	return payload, nil, 0
+}
+
+func beforeChannelJoin(ctx context.Context, logger *log.Logger, db *sql.DB, nk runtime.NakamaModule, envelope *rtapi.Envelope) (*rtapi.Envelope, error) {
+	logger.Printf("Intercepted request to join channel '%v'", envelope.GetChannelJoin().Target)
+	return envelope, nil
 }

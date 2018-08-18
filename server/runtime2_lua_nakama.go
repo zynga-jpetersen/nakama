@@ -46,8 +46,6 @@ import (
 )
 
 const RUNTIME_LUA_CALLBACKS = "runtime_lua_callbacks"
-const API_PREFIX = "/nakama.api.Nakama/"
-const RTAPI_PREFIX = "*rtapi.Envelope_"
 
 type RuntimeLuaCallbacks struct {
 	RPC        map[string]*lua.LFunction
