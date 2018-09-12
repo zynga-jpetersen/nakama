@@ -47,7 +47,7 @@ type RuntimeGoNakamaModule struct {
 
 	node string
 
-	matchCreateFn Runtime2MatchCreateFunction
+	matchCreateFn RuntimeMatchCreateFunction
 }
 
 func NewRuntimeGoNakamaModule(logger *zap.Logger, db *sql.DB, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, tracker Tracker, router MessageRouter) *RuntimeGoNakamaModule {
@@ -224,17 +224,17 @@ func (n *RuntimeGoNakamaModule) AuthenticateSteam(token, username string, create
 	return AuthenticateSteam(n.logger, n.db, n.socialClient, n.config.GetSocial().Steam.AppID, n.config.GetSocial().Steam.PublisherKey, token, username, create)
 }
 
-func (n *RuntimeGoNakamaModule) AuthenticateTokenGenerate(userID, username string, exp int64) (string, error) {
+func (n *RuntimeGoNakamaModule) AuthenticateTokenGenerate(userID, username string, exp int64) (string, int64, error) {
 	if userID == "" {
-		return "", errors.New("expects user id")
+		return "", 0, errors.New("expects user id")
 	}
 	_, err := uuid.FromString(userID)
 	if err != nil {
-		return "", errors.New("expects valid user id")
+		return "", 0, errors.New("expects valid user id")
 	}
 
 	if username == "" {
-		return "", errors.New("expects username")
+		return "", 0, errors.New("expects username")
 	}
 
 	if exp == 0 {
@@ -242,7 +242,8 @@ func (n *RuntimeGoNakamaModule) AuthenticateTokenGenerate(userID, username strin
 		exp = time.Now().UTC().Add(time.Duration(n.config.GetSession().TokenExpirySec) * time.Second).Unix()
 	}
 
-	return generateTokenWithExpiry(n.config, userID, username, exp), nil
+	token, exp := generateTokenWithExpiry(n.config, userID, username, exp)
+	return token, exp, nil
 }
 
 func (n *RuntimeGoNakamaModule) AccountGetId(userID string) (*api.Account, error) {
@@ -1227,7 +1228,7 @@ func (n *RuntimeGoNakamaModule) UserGroupsList(userID string) ([]*api.UserGroupL
 	return groups.UserGroups, nil
 }
 
-func (n *RuntimeGoNakamaModule) SetMatchCreateFn(fn Runtime2MatchCreateFunction) {
+func (n *RuntimeGoNakamaModule) SetMatchCreateFn(fn RuntimeMatchCreateFunction) {
 	n.Lock()
 	n.matchCreateFn = fn
 	n.Unlock()

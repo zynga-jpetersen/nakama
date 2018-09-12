@@ -71,7 +71,7 @@ type MatchJoinResult struct {
 
 type MatchRegistry interface {
 	// Create and start a new match, given a Lua module name.
-	NewMatch(logger *zap.Logger, id uuid.UUID, label *atomic.String, core Runtime2MatchCore, params map[string]interface{}) (*MatchHandler, error)
+	NewMatch(logger *zap.Logger, id uuid.UUID, label *atomic.String, core RuntimeMatchCore, params map[string]interface{}) (*MatchHandler, error)
 	// Return a match handler by ID, only from the local node.
 	GetMatch(id uuid.UUID) *MatchHandler
 	// Remove a tracked match and ensure all its presences are cleaned up.
@@ -117,7 +117,7 @@ func NewLocalMatchRegistry(logger *zap.Logger, config Config, tracker Tracker, n
 	}
 }
 
-func (r *LocalMatchRegistry) NewMatch(logger *zap.Logger, id uuid.UUID, label *atomic.String, core Runtime2MatchCore, params map[string]interface{}) (*MatchHandler, error) {
+func (r *LocalMatchRegistry) NewMatch(logger *zap.Logger, id uuid.UUID, label *atomic.String, core RuntimeMatchCore, params map[string]interface{}) (*MatchHandler, error) {
 	match, err := NewMatchHandler(logger, r.config, r, core, label, id, r.node, params)
 	if err != nil {
 		return nil, err

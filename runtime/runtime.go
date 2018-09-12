@@ -17,6 +17,7 @@ package runtime
 import (
 	"context"
 	"database/sql"
+	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/heroiclabs/nakama/api"
 	"github.com/heroiclabs/nakama/rtapi"
 	"log"
@@ -38,11 +39,117 @@ const (
 	RUNTIME_CTX_MATCH_TICK_RATE  = "match_tick_rate"
 )
 
-type Initialiser interface {
+type Initializer interface {
 	RegisterRpc(id string, fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, payload string) (string, error, int)) error
+
 	RegisterBeforeRt(id string, fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, envelope *rtapi.Envelope) (*rtapi.Envelope, error)) error
 	RegisterAfterRt(id string, fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, envelope *rtapi.Envelope) error) error
+
+	RegisterBeforeGetAccount(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *empty.Empty) (*empty.Empty, error, int)) error
+	RegisterAfterGetAccount(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.Account) error) error
+	RegisterBeforeUpdateAccount(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.UpdateAccountRequest) (*api.UpdateAccountRequest, error, int)) error
+	RegisterAfterUpdateAccount(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeAuthenticateCustom(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AuthenticateCustomRequest) (*api.AuthenticateCustomRequest, error, int)) error
+	RegisterAfterAuthenticateCustom(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.Session) error) error
+	RegisterBeforeAuthenticateDevice(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AuthenticateDeviceRequest) (*api.AuthenticateDeviceRequest, error, int)) error
+	RegisterAfterAuthenticateDevice(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.Session) error) error
+	RegisterBeforeAuthenticateEmail(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AuthenticateEmailRequest) (*api.AuthenticateEmailRequest, error, int)) error
+	RegisterAfterAuthenticateEmail(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.Session) error) error
+	RegisterBeforeAuthenticateFacebook(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AuthenticateFacebookRequest) (*api.AuthenticateFacebookRequest, error, int)) error
+	RegisterAfterAuthenticateFacebook(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.Session) error) error
+	RegisterBeforeAuthenticateGameCenter(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AuthenticateGameCenterRequest) (*api.AuthenticateGameCenterRequest, error, int)) error
+	RegisterAfterAuthenticateGameCenter(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.Session) error) error
+	RegisterBeforeAuthenticateGoogle(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AuthenticateGoogleRequest) (*api.AuthenticateGoogleRequest, error, int)) error
+	RegisterAfterAuthenticateGoogle(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.Session) error) error
+	RegisterBeforeAuthenticateSteam(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AuthenticateSteamRequest) (*api.AuthenticateSteamRequest, error, int)) error
+	RegisterAfterAuthenticateSteam(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.Session) error) error
+	RegisterBeforeListChannelMessages(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.ListChannelMessagesRequest) (*api.ListChannelMessagesRequest, error, int)) error
+	RegisterAfterListChannelMessages(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.ChannelMessageList) error) error
+	RegisterBeforeListFriends(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *empty.Empty) (*empty.Empty, error, int)) error
+	RegisterAfterListFriends(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.Friends) error) error
+	RegisterBeforeAddFriends(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AddFriendsRequest) (*api.AddFriendsRequest, error, int)) error
+	RegisterAfterAddFriends(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeDeleteFriends(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.DeleteFriendsRequest) (*api.DeleteFriendsRequest, error, int)) error
+	RegisterAfterDeleteFriends(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeBlockFriends(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.BlockFriendsRequest) (*api.BlockFriendsRequest, error, int)) error
+	RegisterAfterBlockFriends(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeImportFacebookFriends(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.ImportFacebookFriendsRequest) (*api.ImportFacebookFriendsRequest, error, int)) error
+	RegisterAfterImportFacebookFriends(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeCreateGroup(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.CreateGroupRequest) (*api.CreateGroupRequest, error, int)) error
+	RegisterAfterCreateGroup(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.Group) error) error
+	RegisterBeforeUpdateGroup(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.UpdateGroupRequest) (*api.UpdateGroupRequest, error, int)) error
+	RegisterAfterUpdateGroup(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeDeleteGroup(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.DeleteGroupRequest) (*api.DeleteGroupRequest, error, int)) error
+	RegisterAfterDeleteGroup(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeJoinGroup(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.JoinGroupRequest) (*api.JoinGroupRequest, error, int)) error
+	RegisterAfterJoinGroup(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeLeaveGroup(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.LeaveGroupRequest) (*api.LeaveGroupRequest, error, int)) error
+	RegisterAfterLeaveGroup(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeAddGroupUsers(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AddGroupUsersRequest) (*api.AddGroupUsersRequest, error, int)) error
+	RegisterAfterAddGroupUsers(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeKickGroupUsers(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.KickGroupUsersRequest) (*api.KickGroupUsersRequest, error, int)) error
+	RegisterAfterKickGroupUsers(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforePromoteGroupUsers(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.PromoteGroupUsersRequest) (*api.PromoteGroupUsersRequest, error, int)) error
+	RegisterAfterPromoteGroupUsers(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeListGroupUsers(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.ListGroupUsersRequest) (*api.ListGroupUsersRequest, error, int)) error
+	RegisterAfterListGroupUsers(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.GroupUserList) error) error
+	RegisterBeforeListUserGroups(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.ListUserGroupsRequest) (*api.ListUserGroupsRequest, error, int)) error
+	RegisterAfterListUserGroups(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.UserGroupList) error) error
+	RegisterBeforeListGroups(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.ListGroupsRequest) (*api.ListGroupsRequest, error, int)) error
+	RegisterAfterListGroups(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.GroupList) error) error
+	RegisterBeforeDeleteLeaderboardRecord(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.DeleteLeaderboardRecordRequest) (*api.DeleteLeaderboardRecordRequest, error, int)) error
+	RegisterAfterDeleteLeaderboardRecord(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeListLeaderboardRecords(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.ListLeaderboardRecordsRequest) (*api.ListLeaderboardRecordsRequest, error, int)) error
+	RegisterAfterListLeaderboardRecords(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.LeaderboardRecordList) error) error
+	RegisterBeforeWriteLeaderboardRecord(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.WriteLeaderboardRecordRequest) (*api.WriteLeaderboardRecordRequest, error, int)) error
+	RegisterAfterWriteLeaderboardRecord(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.LeaderboardRecord) error) error
+	RegisterBeforeLinkCustom(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AccountCustom) (*api.AccountCustom, error, int)) error
+	RegisterAfterLinkCustom(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeLinkDevice(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AccountDevice) (*api.AccountDevice, error, int)) error
+	RegisterAfterLinkDevice(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeLinkEmail(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AccountEmail) (*api.AccountEmail, error, int)) error
+	RegisterAfterLinkEmail(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeLinkFacebook(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.LinkFacebookRequest) (*api.LinkFacebookRequest, error, int)) error
+	RegisterAfterLinkFacebook(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeLinkGameCenter(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AccountGameCenter) (*api.AccountGameCenter, error, int)) error
+	RegisterAfterLinkGameCenter(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeLinkGoogle(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AccountGoogle) (*api.AccountGoogle, error, int)) error
+	RegisterAfterLinkGoogle(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeLinkSteam(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AccountSteam) (*api.AccountSteam, error, int)) error
+	RegisterAfterLinkSteam(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeListMatches(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.ListMatchesRequest) (*api.ListMatchesRequest, error, int)) error
+	RegisterAfterListMatches(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.MatchList) error) error
+	RegisterBeforeListNotifications(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.ListNotificationsRequest) (*api.ListNotificationsRequest, error, int)) error
+	RegisterAfterListNotifications(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.NotificationList) error) error
+	RegisterBeforeDeleteNotification(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.DeleteNotificationsRequest) (*api.DeleteNotificationsRequest, error, int)) error
+	RegisterAfterDeleteNotification(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeListStorageObjects(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.ListStorageObjectsRequest) (*api.ListStorageObjectsRequest, error, int)) error
+	RegisterAfterListStorageObjects(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.StorageObjectList) error) error
+	RegisterBeforeReadStorageObjects(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.ReadStorageObjectsRequest) (*api.ReadStorageObjectsRequest, error, int)) error
+	RegisterAfterReadStorageObjects(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.StorageObjects) error) error
+	RegisterBeforeWriteStorageObjects(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.WriteStorageObjectsRequest) (*api.WriteStorageObjectsRequest, error, int)) error
+	RegisterAfterWriteStorageObjects(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.StorageObjectAcks) error) error
+	RegisterBeforeDeleteStorageObjects(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.DeleteStorageObjectsRequest) (*api.DeleteStorageObjectsRequest, error, int)) error
+	RegisterAfterDeleteStorageObjects(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeUnlinkCustom(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AccountCustom) (*api.AccountCustom, error, int)) error
+	RegisterAfterUnlinkCustom(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeUnlinkDevice(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AccountDevice) (*api.AccountDevice, error, int)) error
+	RegisterAfterUnlinkDevice(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeUnlinkEmail(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AccountEmail) (*api.AccountEmail, error, int)) error
+	RegisterAfterUnlinkEmail(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeUnlinkFacebook(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AccountFacebook) (*api.AccountFacebook, error, int)) error
+	RegisterAfterUnlinkFacebook(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeUnlinkGameCenter(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AccountGameCenter) (*api.AccountGameCenter, error, int)) error
+	RegisterAfterUnlinkGameCenter(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeUnlinkGoogle(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AccountGoogle) (*api.AccountGoogle, error, int)) error
+	RegisterAfterUnlinkGoogle(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeUnlinkSteam(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.AccountSteam) (*api.AccountSteam, error, int)) error
+	RegisterAfterUnlinkSteam(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *empty.Empty) error) error
+	RegisterBeforeGetUsers(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, in *api.GetUsersRequest) (*api.GetUsersRequest, error, int)) error
+	RegisterAfterGetUsers(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, out *api.Users) error) error
+
 	RegisterMatchmakerMatched(fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule, entries []MatchmakerEntry) (string, error)) error
+
 	RegisterMatch(name string, fn func(ctx context.Context, logger *log.Logger, db *sql.DB, nk NakamaModule) (Match, error)) error
 }
 
@@ -143,7 +250,7 @@ type NakamaModule interface {
 	AuthenticateGoogle(token, username string, create bool) (string, string, bool, error)
 	AuthenticateSteam(token, username string, create bool) (string, string, bool, error)
 
-	AuthenticateTokenGenerate(userID, username string, exp int64) (string, error)
+	AuthenticateTokenGenerate(userID, username string, exp int64) (string, int64, error)
 
 	AccountGetId(userID string) (*api.Account, error)
 	// TODO nullable fields?

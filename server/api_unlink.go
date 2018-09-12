@@ -15,8 +15,13 @@
 package server
 
 import (
+	"github.com/gofrs/uuid"
+	"go.opencensus.io/stats"
+	"go.opencensus.io/tag"
+	"go.opencensus.io/trace"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cockroachdb/cockroach-go/crdb"
 	"github.com/golang/protobuf/ptypes/empty"
@@ -44,6 +49,31 @@ AND ((facebook_id IS NOT NULL
      EXISTS (SELECT id FROM user_device WHERE user_id = $1 LIMIT 1))`
 
 	userID := ctx.Value(ctxUserIDKey{})
+
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeUnlinkCustomFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.UnlinkCustom"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	res, err := s.db.Exec(query, userID, in.Id)
 
 	if err != nil {
@@ -51,6 +81,23 @@ AND ((facebook_id IS NOT NULL
 		return nil, status.Error(codes.Internal, "Error while trying to unlink custom ID.")
 	} else if count, _ := res.RowsAffected(); count == 0 {
 		return nil, status.Error(codes.PermissionDenied, "Cannot unlink last account identifier. Check profile exists and is not last link.")
+	}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterUnlinkCustomFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.UnlinkCustom"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, &empty.Empty{})
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
 
 	return &empty.Empty{}, nil
@@ -61,6 +108,32 @@ func (s *ApiServer) UnlinkDevice(ctx context.Context, in *api.AccountDevice) (*e
 		return nil, status.Error(codes.InvalidArgument, "A device ID must be supplied.")
 	}
 
+	userID := ctx.Value(ctxUserIDKey{})
+
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeUnlinkDeviceFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.UnlinkDevice"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		s.logger.Error("Could not begin database transaction.", zap.Error(err))
@@ -68,8 +141,6 @@ func (s *ApiServer) UnlinkDevice(ctx context.Context, in *api.AccountDevice) (*e
 	}
 
 	err = crdb.ExecuteInTx(ctx, tx, func() error {
-		userID := ctx.Value(ctxUserIDKey{})
-
 		query := `DELETE FROM user_device WHERE id = $2 AND user_id = $1
 AND (EXISTS (SELECT id FROM users WHERE id = $1 AND
     (facebook_id IS NOT NULL
@@ -109,6 +180,23 @@ AND (EXISTS (SELECT id FROM users WHERE id = $1 AND
 		return nil, status.Error(codes.Internal, "Could not unlink device ID.")
 	}
 
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterUnlinkDeviceFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.UnlinkDevice"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, &empty.Empty{})
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	return &empty.Empty{}, nil
 }
 
@@ -129,6 +217,31 @@ AND ((facebook_id IS NOT NULL
      EXISTS (SELECT id FROM user_device WHERE user_id = $1 LIMIT 1))`
 
 	userID := ctx.Value(ctxUserIDKey{})
+
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeUnlinkEmailFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.UnlinkEmail"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	cleanEmail := strings.ToLower(in.Email)
 	res, err := s.db.Exec(query, userID, cleanEmail)
 
@@ -139,12 +252,55 @@ AND ((facebook_id IS NOT NULL
 		return nil, status.Error(codes.PermissionDenied, "Cannot unlink last account identifier. Check profile exists and is not last link.")
 	}
 
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterUnlinkEmailFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.UnlinkEmail"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, &empty.Empty{})
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	return &empty.Empty{}, nil
 }
 
 func (s *ApiServer) UnlinkFacebook(ctx context.Context, in *api.AccountFacebook) (*empty.Empty, error) {
 	if in.Token == "" {
 		return nil, status.Error(codes.InvalidArgument, "Facebook access token is required.")
+	}
+
+	userID := ctx.Value(ctxUserIDKey{})
+
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeUnlinkFacebookFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.UnlinkFacebook"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
 
 	facebookProfile, err := s.socialClient.GetFacebookProfile(in.Token)
@@ -164,7 +320,6 @@ AND ((custom_id IS NOT NULL
      OR
      EXISTS (SELECT id FROM user_device WHERE user_id = $1 LIMIT 1))`
 
-	userID := ctx.Value(ctxUserIDKey{})
 	res, err := s.db.Exec(query, userID, facebookProfile.ID)
 
 	if err != nil {
@@ -172,6 +327,23 @@ AND ((custom_id IS NOT NULL
 		return nil, status.Error(codes.Internal, "Error while trying to unlink Facebook ID.")
 	} else if count, _ := res.RowsAffected(); count == 0 {
 		return nil, status.Error(codes.PermissionDenied, "Cannot unlink last account identifier. Check profile exists and is not last link.")
+	}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterUnlinkFacebookFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.UnlinkFacebook"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, &empty.Empty{})
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
 
 	return &empty.Empty{}, nil
@@ -192,6 +364,32 @@ func (s *ApiServer) UnlinkGameCenter(ctx context.Context, in *api.AccountGameCen
 		return nil, status.Error(codes.InvalidArgument, "GameCenter timestamp is required.")
 	}
 
+	userID := ctx.Value(ctxUserIDKey{})
+
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeUnlinkGameCenterFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.UnlinkGameCenter"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	valid, err := s.socialClient.CheckGameCenterID(in.PlayerId, in.BundleId, in.TimestampSeconds, in.Salt, in.Signature, in.PublicKeyUrl)
 	if !valid || err != nil {
 		s.logger.Info("Could not authenticate GameCenter profile.", zap.Error(err), zap.Bool("valid", valid))
@@ -209,7 +407,6 @@ AND ((custom_id IS NOT NULL
      OR
      EXISTS (SELECT id FROM user_device WHERE user_id = $1 LIMIT 1))`
 
-	userID := ctx.Value(ctxUserIDKey{})
 	res, err := s.db.Exec(query, userID, in.PlayerId)
 
 	if err != nil {
@@ -219,12 +416,55 @@ AND ((custom_id IS NOT NULL
 		return nil, status.Error(codes.PermissionDenied, "Cannot unlink last account identifier. Check profile exists and is not last link.")
 	}
 
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterUnlinkGameCenterFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.UnlinkGameCenter"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, &empty.Empty{})
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	return &empty.Empty{}, nil
 }
 
 func (s *ApiServer) UnlinkGoogle(ctx context.Context, in *api.AccountGoogle) (*empty.Empty, error) {
 	if in.Token == "" {
 		return nil, status.Error(codes.InvalidArgument, "Google access token is required.")
+	}
+
+	userID := ctx.Value(ctxUserIDKey{})
+
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeUnlinkGoogleFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.UnlinkGoogle"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
 
 	googleProfile, err := s.socialClient.CheckGoogleToken(in.Token)
@@ -244,7 +484,6 @@ AND ((custom_id IS NOT NULL
      OR
      EXISTS (SELECT id FROM user_device WHERE user_id = $1 LIMIT 1))`
 
-	userID := ctx.Value(ctxUserIDKey{})
 	res, err := s.db.Exec(query, userID, googleProfile.Sub)
 
 	if err != nil {
@@ -252,6 +491,23 @@ AND ((custom_id IS NOT NULL
 		return nil, status.Error(codes.Internal, "Error while trying to unlink Google ID.")
 	} else if count, _ := res.RowsAffected(); count == 0 {
 		return nil, status.Error(codes.PermissionDenied, "Cannot unlink last account identifier. Check profile exists and is not last link.")
+	}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterUnlinkGoogleFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.UnlinkGoogle"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, &empty.Empty{})
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
 
 	return &empty.Empty{}, nil
@@ -264,6 +520,32 @@ func (s *ApiServer) UnlinkSteam(ctx context.Context, in *api.AccountSteam) (*emp
 
 	if in.Token == "" {
 		return nil, status.Error(codes.InvalidArgument, "Steam access token is required.")
+	}
+
+	userID := ctx.Value(ctxUserIDKey{})
+
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeUnlinkSteamFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.UnlinkSteam"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
 
 	steamProfile, err := s.socialClient.GetSteamProfile(s.config.GetSocial().Steam.PublisherKey, s.config.GetSocial().Steam.AppID, in.Token)
@@ -283,7 +565,6 @@ AND ((custom_id IS NOT NULL
      OR
      EXISTS (SELECT id FROM user_device WHERE user_id = $1 LIMIT 1))`
 
-	userID := ctx.Value(ctxUserIDKey{})
 	res, err := s.db.Exec(query, userID, strconv.FormatUint(steamProfile.SteamID, 10))
 
 	if err != nil {
@@ -291,6 +572,23 @@ AND ((custom_id IS NOT NULL
 		return nil, status.Error(codes.Internal, "Error while trying to unlink Steam ID.")
 	} else if count, _ := res.RowsAffected(); count == 0 {
 		return nil, status.Error(codes.PermissionDenied, "Cannot unlink last account identifier. Check profile exists and is not last link.")
+	}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterUnlinkSteamFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.UnlinkSteam"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, userID.(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, &empty.Empty{})
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
 
 	return &empty.Empty{}, nil

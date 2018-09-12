@@ -71,7 +71,7 @@ type MatchHandler struct {
 	tracker       Tracker
 	router        MessageRouter
 
-	core Runtime2MatchCore
+	core RuntimeMatchCore
 
 	// Identification not (directly) controlled by match init.
 	ID     uuid.UUID
@@ -97,7 +97,7 @@ type MatchHandler struct {
 	state interface{}
 }
 
-func NewMatchHandler(logger *zap.Logger, config Config, matchRegistry MatchRegistry, core Runtime2MatchCore, label *atomic.String, id uuid.UUID, node string, params map[string]interface{}) (*MatchHandler, error) {
+func NewMatchHandler(logger *zap.Logger, config Config, matchRegistry MatchRegistry, core RuntimeMatchCore, label *atomic.String, id uuid.UUID, node string, params map[string]interface{}) (*MatchHandler, error) {
 	state, rateInt, labelStr, err := core.MatchInit(params)
 	if err != nil {
 		return nil, err

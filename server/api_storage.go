@@ -16,6 +16,10 @@ package server
 
 import (
 	"encoding/json"
+	"go.opencensus.io/stats"
+	"go.opencensus.io/tag"
+	"go.opencensus.io/trace"
+	"time"
 
 	"github.com/gofrs/uuid"
 	"github.com/golang/protobuf/ptypes/empty"
@@ -44,6 +48,30 @@ func (s *ApiServer) ListStorageObjects(ctx context.Context, in *api.ListStorageO
 		userID = uid
 	}
 
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeListStorageObjectsFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.ListStorageObjects"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, caller.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	storageObjectList, code, listingError := StorageListObjects(s.logger, s.db, caller, userID, in.GetCollection(), limit, in.GetCursor())
 
 	if listingError != nil {
@@ -51,6 +79,23 @@ func (s *ApiServer) ListStorageObjects(ctx context.Context, in *api.ListStorageO
 			return nil, status.Error(code, "Error listing storage objects.")
 		}
 		return nil, status.Error(code, listingError.Error())
+	}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterListStorageObjectsFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.ListStorageObjects"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, caller.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, storageObjectList)
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
 
 	return storageObjectList, nil
@@ -75,9 +120,50 @@ func (s *ApiServer) ReadStorageObjects(ctx context.Context, in *api.ReadStorageO
 
 	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
 
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeReadStorageObjectsFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.ReadStorageObjects"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	objects, err := StorageReadObjects(s.logger, s.db, userID, in.GetObjectIds())
 	if err != nil {
 		return nil, status.Error(codes.Internal, "Error reading storage objects.")
+	}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterReadStorageObjectsFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.ReadStorageObjects"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, ctx.Value(ctxUserIDKey{}).(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, objects)
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
 
 	return objects, nil
@@ -116,15 +202,56 @@ func (s *ApiServer) WriteStorageObjects(ctx context.Context, in *api.WriteStorag
 	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
 	userObjects := map[uuid.UUID][]*api.WriteStorageObject{userID: in.GetObjects()}
 
-	acks, code, err := StorageWriteObjects(s.logger, s.db, false, userObjects)
-	if err == nil {
-		return acks, nil
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeWriteStorageObjectsFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.WriteStorageObjects"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
 
-	if code == codes.Internal {
-		return nil, status.Error(codes.Internal, "Error writing storage objects.")
+	acks, code, err := StorageWriteObjects(s.logger, s.db, false, userObjects)
+	if err != nil {
+		if code == codes.Internal {
+			return nil, status.Error(codes.Internal, "Error writing storage objects.")
+		}
+		return nil, status.Error(code, err.Error())
 	}
-	return nil, status.Error(code, err.Error())
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterWriteStorageObjectsFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.WriteStorageObjects"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, acks)
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
+	return acks, nil
 }
 
 func (s *ApiServer) DeleteStorageObjects(ctx context.Context, in *api.DeleteStorageObjectsRequest) (*empty.Empty, error) {
@@ -141,11 +268,52 @@ func (s *ApiServer) DeleteStorageObjects(ctx context.Context, in *api.DeleteStor
 	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
 	objectIDs := map[uuid.UUID][]*api.DeleteStorageObjectId{userID: in.GetObjectIds()}
 
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeDeleteStorageObjectsFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.DeleteStorageObjects"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	if code, err := StorageDeleteObjects(s.logger, s.db, false, objectIDs); err != nil {
 		if code == codes.Internal {
 			return nil, status.Error(codes.Internal, "Error deleting storage objects.")
 		}
 		return nil, status.Error(code, err.Error())
+	}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterDeleteStorageObjectsFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.DeleteStorageObjects"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, ctx.Value(ctxUserIDKey{}).(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, &empty.Empty{})
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
 
 	return &empty.Empty{}, nil

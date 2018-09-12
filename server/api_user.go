@@ -17,9 +17,13 @@ package server
 import (
 	"github.com/gofrs/uuid"
 	"github.com/heroiclabs/nakama/api"
+	"go.opencensus.io/stats"
+	"go.opencensus.io/tag"
+	"go.opencensus.io/trace"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"time"
 )
 
 func (s *ApiServer) GetUsers(ctx context.Context, in *api.GetUsersRequest) (*api.Users, error) {
@@ -49,9 +53,50 @@ func (s *ApiServer) GetUsers(ctx context.Context, in *api.GetUsersRequest) (*api
 		facebookIDs = in.GetFacebookIds()
 	}
 
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeGetUsersFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.GetUsers"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, ctx.Value(ctxUserIDKey{}).(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	users, err := GetUsers(s.logger, s.db, s.tracker, ids, usernames, facebookIDs)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "Error retrieving user accounts.")
+	}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterGetUsersFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.GetUsers"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, ctx.Value(ctxUserIDKey{}).(uuid.UUID).String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, users)
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
 
 	return users, nil

@@ -66,14 +66,15 @@ type RuntimeLuaNakamaModule struct {
 	tracker          Tracker
 	router           MessageRouter
 	once             *sync.Once
+	localCache       *RuntimeLuaLocalCache
 	announceCallback func(RuntimeExecutionMode, string)
 	client           *http.Client
 
 	node          string
-	matchCreateFn Runtime2MatchCreateFunction
+	matchCreateFn RuntimeMatchCreateFunction
 }
 
-func NewRuntimeLuaNakamaModule(logger *zap.Logger, db *sql.DB, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, l *lua.LState, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, tracker Tracker, router MessageRouter, once *sync.Once, matchCreateFn Runtime2MatchCreateFunction, announceCallback func(RuntimeExecutionMode, string)) *RuntimeLuaNakamaModule {
+func NewRuntimeLuaNakamaModule(logger *zap.Logger, db *sql.DB, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, l *lua.LState, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, tracker Tracker, router MessageRouter, once *sync.Once, localCache *RuntimeLuaLocalCache, matchCreateFn RuntimeMatchCreateFunction, announceCallback func(RuntimeExecutionMode, string)) *RuntimeLuaNakamaModule {
 	l.SetContext(context.WithValue(context.Background(), RUNTIME_LUA_CALLBACKS, &RuntimeLuaCallbacks{
 		RPC:    make(map[string]*lua.LFunction),
 		Before: make(map[string]*lua.LFunction),
@@ -90,6 +91,7 @@ func NewRuntimeLuaNakamaModule(logger *zap.Logger, db *sql.DB, config Config, so
 		tracker:          tracker,
 		router:           router,
 		once:             once,
+		localCache:       localCache,
 		announceCallback: announceCallback,
 		client: &http.Client{
 			Timeout: 5 * time.Second,
@@ -109,6 +111,9 @@ func (n *RuntimeLuaNakamaModule) Loader(l *lua.LState) int {
 		"register_rt_after":           n.registerRTAfter,
 		"register_matchmaker_matched": n.registerMatchmakerMatched,
 		"run_once":                    n.runOnce,
+		"localcache_get":              n.localcacheGet,
+		"localcache_put":              n.localcachePut,
+		"localcache_delete":           n.localcacheDelete,
 		"time":                        n.time,
 		"cron_next":                   n.cronNext,
 		"sql_exec":                    n.sqlExec,
@@ -343,6 +348,59 @@ func (n *RuntimeLuaNakamaModule) runOnce(l *lua.LState) int {
 			}
 		}
 	})
+
+	return 0
+}
+
+func (n *RuntimeLuaNakamaModule) localcacheGet(l *lua.LState) int {
+	key := l.CheckString(1)
+	if key == "" {
+		l.ArgError(1, "expects key string")
+		return 0
+	}
+
+	defaultValue := l.Get(2)
+	if t := defaultValue.Type(); t != lua.LTNil && t != lua.LTString {
+		l.ArgError(2, "expects default value string or nil")
+		return 0
+	}
+
+	value, found := n.localCache.Get(key)
+
+	if found {
+		l.Push(lua.LString(value))
+	} else {
+		l.Push(defaultValue)
+	}
+	return 1
+}
+
+func (n *RuntimeLuaNakamaModule) localcachePut(l *lua.LState) int {
+	key := l.CheckString(1)
+	if key == "" {
+		l.ArgError(1, "expects key string")
+		return 0
+	}
+
+	value := l.CheckString(2)
+	if value == "" {
+		l.ArgError(2, "expects value string")
+		return 0
+	}
+
+	n.localCache.Put(key, value)
+
+	return 0
+}
+
+func (n *RuntimeLuaNakamaModule) localcacheDelete(l *lua.LState) int {
+	key := l.CheckString(1)
+	if key == "" {
+		l.ArgError(1, "expects key string")
+		return 0
+	}
+
+	n.localCache.Delete(key)
 
 	return 0
 }
@@ -1245,10 +1303,11 @@ func (n *RuntimeLuaNakamaModule) authenticateTokenGenerate(l *lua.LState) int {
 		exp = time.Now().UTC().Add(time.Duration(n.config.GetSession().TokenExpirySec) * time.Second).Unix()
 	}
 
-	token := generateTokenWithExpiry(n.config, userIDString, username, exp)
+	token, exp := generateTokenWithExpiry(n.config, userIDString, username, exp)
 
 	l.Push(lua.LString(token))
-	return 1
+	l.Push(lua.LNumber(exp))
+	return 2
 }
 
 func (n *RuntimeLuaNakamaModule) loggerInfo(l *lua.LState) int {

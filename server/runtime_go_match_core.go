@@ -26,7 +26,7 @@ import (
 	"log"
 )
 
-type Runtime2GoMatchCore struct {
+type RuntimeGoMatchCore struct {
 	logger        *zap.Logger
 	matchRegistry MatchRegistry
 	tracker       Tracker
@@ -47,12 +47,12 @@ type Runtime2GoMatchCore struct {
 	ctx       context.Context
 }
 
-func NewRuntime2GoMatchCore(logger *zap.Logger, matchRegistry MatchRegistry, tracker Tracker, router MessageRouter, id uuid.UUID, node string, labelUpdateFn func(string), stdLogger *log.Logger, db *sql.DB, env map[string]string, nk runtime.NakamaModule, match runtime.Match) (Runtime2MatchCore, error) {
+func NewRuntimeGoMatchCore(logger *zap.Logger, matchRegistry MatchRegistry, tracker Tracker, router MessageRouter, id uuid.UUID, node string, labelUpdateFn func(string), stdLogger *log.Logger, db *sql.DB, env map[string]string, nk runtime.NakamaModule, match runtime.Match) (RuntimeMatchCore, error) {
 	ctx := NewRuntimeGoContext(env, RuntimeExecutionModeMatch, nil, 0, "", "", "", "", "")
 	ctx = context.WithValue(ctx, runtime.RUNTIME_CTX_MATCH_ID, fmt.Sprintf("%v.%v", id.String(), node))
 	ctx = context.WithValue(ctx, runtime.RUNTIME_CTX_MATCH_NODE, node)
 
-	return &Runtime2GoMatchCore{
+	return &RuntimeGoMatchCore{
 		logger:        logger,
 		matchRegistry: matchRegistry,
 		tracker:       tracker,
@@ -78,7 +78,7 @@ func NewRuntime2GoMatchCore(logger *zap.Logger, matchRegistry MatchRegistry, tra
 	}, nil
 }
 
-func (r *Runtime2GoMatchCore) MatchInit(params map[string]interface{}) (interface{}, int, string, error) {
+func (r *RuntimeGoMatchCore) MatchInit(params map[string]interface{}) (interface{}, int, string, error) {
 	state, tickRate, label := r.match.MatchInit(r.ctx, r.stdLogger, r.db, r.nk, params)
 
 	if len(label) > 256 {
@@ -94,7 +94,7 @@ func (r *Runtime2GoMatchCore) MatchInit(params map[string]interface{}) (interfac
 	return state, tickRate, label, nil
 }
 
-func (r *Runtime2GoMatchCore) MatchJoinAttempt(tick int64, state interface{}, userID, sessionID uuid.UUID, username, node string) (interface{}, bool, string, error) {
+func (r *RuntimeGoMatchCore) MatchJoinAttempt(tick int64, state interface{}, userID, sessionID uuid.UUID, username, node string) (interface{}, bool, string, error) {
 	presence := &MatchPresence{
 		Node:      node,
 		UserID:    userID,
@@ -106,7 +106,7 @@ func (r *Runtime2GoMatchCore) MatchJoinAttempt(tick int64, state interface{}, us
 	return newState, allow, reason, nil
 }
 
-func (r *Runtime2GoMatchCore) MatchJoin(tick int64, state interface{}, joins []*MatchPresence) (interface{}, error) {
+func (r *RuntimeGoMatchCore) MatchJoin(tick int64, state interface{}, joins []*MatchPresence) (interface{}, error) {
 	presences := make([]runtime.Presence, len(joins))
 	for i, join := range joins {
 		presences[i] = runtime.Presence(join)
@@ -116,7 +116,7 @@ func (r *Runtime2GoMatchCore) MatchJoin(tick int64, state interface{}, joins []*
 	return newState, nil
 }
 
-func (r *Runtime2GoMatchCore) MatchLeave(tick int64, state interface{}, leaves []*MatchPresence) (interface{}, error) {
+func (r *RuntimeGoMatchCore) MatchLeave(tick int64, state interface{}, leaves []*MatchPresence) (interface{}, error) {
 	presences := make([]runtime.Presence, len(leaves))
 	for i, leave := range leaves {
 		presences[i] = runtime.Presence(leave)
@@ -126,7 +126,7 @@ func (r *Runtime2GoMatchCore) MatchLeave(tick int64, state interface{}, leaves [
 	return newState, nil
 }
 
-func (r *Runtime2GoMatchCore) MatchLoop(tick int64, state interface{}, inputCh chan *MatchDataMessage) (interface{}, error) {
+func (r *RuntimeGoMatchCore) MatchLoop(tick int64, state interface{}, inputCh chan *MatchDataMessage) (interface{}, error) {
 	// Drain the input queue into a slice.
 	size := len(inputCh)
 	messages := make([]runtime.MatchData, size)
@@ -139,7 +139,7 @@ func (r *Runtime2GoMatchCore) MatchLoop(tick int64, state interface{}, inputCh c
 	return newState, nil
 }
 
-func (r *Runtime2GoMatchCore) BroadcastMessage(opCode int64, data []byte, presences []runtime.Presence, sender runtime.Presence) error {
+func (r *RuntimeGoMatchCore) BroadcastMessage(opCode int64, data []byte, presences []runtime.Presence, sender runtime.Presence) error {
 	var presenceIDs []*PresenceID
 	if presences != nil {
 		size := len(presences)
@@ -226,7 +226,7 @@ func (r *Runtime2GoMatchCore) BroadcastMessage(opCode int64, data []byte, presen
 	return nil
 }
 
-func (r *Runtime2GoMatchCore) MatchKick(presences []runtime.Presence) error {
+func (r *RuntimeGoMatchCore) MatchKick(presences []runtime.Presence) error {
 	size := len(presences)
 	if size == 0 {
 		return nil
@@ -256,7 +256,7 @@ func (r *Runtime2GoMatchCore) MatchKick(presences []runtime.Presence) error {
 	return nil
 }
 
-func (r *Runtime2GoMatchCore) MatchLabelUpdate(label string) error {
+func (r *RuntimeGoMatchCore) MatchLabelUpdate(label string) error {
 	r.labelUpdateFn(label)
 	// This must be executed from inside a match call so safe to update here.
 	r.ctx = context.WithValue(r.ctx, runtime.RUNTIME_CTX_MATCH_LABEL, label)

@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
+	"google.golang.org/grpc/peer"
 	"net"
 	"net/http"
 	"strings"
@@ -64,12 +65,12 @@ type ApiServer struct {
 	matchRegistry     MatchRegistry
 	tracker           Tracker
 	router            MessageRouter
-	runtime           *Runtime2
+	runtime           *Runtime
 	grpcServer        *grpc.Server
 	grpcGatewayServer *http.Server
 }
 
-func StartApiServer(logger *zap.Logger, startupLogger *zap.Logger, db *sql.DB, jsonpbMarshaler *jsonpb.Marshaler, jsonpbUnmarshaler *jsonpb.Unmarshaler, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, matchmaker Matchmaker, tracker Tracker, router MessageRouter, pipeline *Pipeline, runtime *Runtime2) *ApiServer {
+func StartApiServer(logger *zap.Logger, startupLogger *zap.Logger, db *sql.DB, jsonpbMarshaler *jsonpb.Marshaler, jsonpbUnmarshaler *jsonpb.Unmarshaler, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, matchmaker Matchmaker, tracker Tracker, router MessageRouter, pipeline *Pipeline, runtime *Runtime) *ApiServer {
 	serverOpts := []grpc.ServerOption{
 		grpc.StatsHandler(&ocgrpc.ServerHandler{IsPublicEndpoint: true}),
 		grpc.MaxRecvMsgSize(int(config.GetSocket().MaxMessageSizeBytes)),
@@ -404,4 +405,30 @@ func decompressHandler(logger *zap.Logger, h http.Handler) http.HandlerFunc {
 		}
 		h.ServeHTTP(w, r)
 	})
+}
+
+func extractClientAddress(logger *zap.Logger, ctx context.Context) (string, string) {
+	clientAddr := ""
+	clientIP := ""
+	clientPort := ""
+	md, _ := metadata.FromIncomingContext(ctx)
+	if ips := md.Get("x-forwarded-for"); len(ips) > 0 {
+		// Look for gRPC-Gateway / LB header.
+		clientAddr = strings.Split(ips[0], ",")[0]
+	} else if peerInfo, ok := peer.FromContext(ctx); ok {
+		// If missing, try to look up gRPC peer info.
+		clientAddr = peerInfo.Addr.String()
+	}
+
+	clientAddr = strings.TrimSpace(clientAddr)
+	if host, port, err := net.SplitHostPort(clientAddr); err == nil {
+		clientIP = host
+		clientPort = port
+	} else if addrErr, ok := err.(*net.AddrError); ok && addrErr.Err == "missing port in address" {
+		clientIP = clientAddr
+	} else {
+		logger.Debug("Could not extract client address from request.", zap.Error(err))
+	}
+
+	return clientIP, clientPort
 }

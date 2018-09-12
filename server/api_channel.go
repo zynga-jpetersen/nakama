@@ -17,9 +17,13 @@ package server
 import (
 	"github.com/gofrs/uuid"
 	"github.com/heroiclabs/nakama/api"
+	"go.opencensus.io/stats"
+	"go.opencensus.io/tag"
+	"go.opencensus.io/trace"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"time"
 )
 
 func (s *ApiServer) ListChannelMessages(ctx context.Context, in *api.ListChannelMessagesRequest) (*api.ChannelMessageList, error) {
@@ -46,6 +50,31 @@ func (s *ApiServer) ListChannelMessages(ctx context.Context, in *api.ListChannel
 	}
 
 	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
+
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeListChannelMessagesFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.ListChannelMessages"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	messageList, err := ChannelMessagesList(s.logger, s.db, userID, streamConversionResult.Stream, in.ChannelId, limit, forward, in.Cursor)
 	if err == ErrChannelCursorInvalid {
 		return nil, status.Error(codes.InvalidArgument, "Cursor is invalid or expired.")
@@ -53,6 +82,23 @@ func (s *ApiServer) ListChannelMessages(ctx context.Context, in *api.ListChannel
 		return nil, status.Error(codes.InvalidArgument, "Group not found.")
 	} else if err != nil {
 		return nil, status.Error(codes.Internal, "Error listing messages from channel.")
+	}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterListChannelMessagesFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.ListChannelMessages"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, messageList)
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
 
 	return messageList, nil

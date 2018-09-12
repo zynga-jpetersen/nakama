@@ -26,7 +26,7 @@ import (
 	"sync"
 )
 
-type Runtime2LuaMatchCore struct {
+type RuntimeLuaMatchCore struct {
 	logger        *zap.Logger
 	matchRegistry MatchRegistry
 	tracker       Tracker
@@ -49,7 +49,7 @@ type Runtime2LuaMatchCore struct {
 	dispatcher    *lua.LTable
 }
 
-func NewRuntime2LuaMatchCore(logger *zap.Logger, db *sql.DB, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, tracker Tracker, router MessageRouter, stdLibs map[string]lua.LGFunction, once *sync.Once, goMatchCreateFn Runtime2MatchCreateFunction, id uuid.UUID, node string, name string, labelUpdateFn func(string)) (Runtime2MatchCore, error) {
+func NewRuntimeLuaMatchCore(logger *zap.Logger, db *sql.DB, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, sessionRegistry *SessionRegistry, matchRegistry MatchRegistry, tracker Tracker, router MessageRouter, stdLibs map[string]lua.LGFunction, once *sync.Once, localCache *RuntimeLuaLocalCache, goMatchCreateFn RuntimeMatchCreateFunction, id uuid.UUID, node string, name string, labelUpdateFn func(string)) (RuntimeMatchCore, error) {
 	// Set up the Lua VM that will handle this match.
 	vm := lua.NewState(lua.Options{
 		CallStackSize:       config.GetRuntime().CallStackSize,
@@ -63,7 +63,7 @@ func NewRuntime2LuaMatchCore(logger *zap.Logger, db *sql.DB, config Config, soci
 		vm.Call(1, 0)
 	}
 
-	allMatchCreateFn := func(logger *zap.Logger, id uuid.UUID, node string, name string, labelUpdateFn func(string)) (Runtime2MatchCore, error) {
+	allMatchCreateFn := func(logger *zap.Logger, id uuid.UUID, node string, name string, labelUpdateFn func(string)) (RuntimeMatchCore, error) {
 		core, err := goMatchCreateFn(logger, id, node, name, labelUpdateFn)
 		if err != nil {
 			return nil, err
@@ -71,10 +71,10 @@ func NewRuntime2LuaMatchCore(logger *zap.Logger, db *sql.DB, config Config, soci
 		if core != nil {
 			return core, nil
 		}
-		return NewRuntime2LuaMatchCore(logger, db, config, socialClient, leaderboardCache, sessionRegistry, matchRegistry, tracker, router, stdLibs, once, goMatchCreateFn, id, node, name, labelUpdateFn)
+		return NewRuntimeLuaMatchCore(logger, db, config, socialClient, leaderboardCache, sessionRegistry, matchRegistry, tracker, router, stdLibs, once, localCache, goMatchCreateFn, id, node, name, labelUpdateFn)
 	}
 
-	nakamaModule := NewRuntimeLuaNakamaModule(logger, db, config, socialClient, leaderboardCache, vm, sessionRegistry, matchRegistry, tracker, router, once, allMatchCreateFn, nil)
+	nakamaModule := NewRuntimeLuaNakamaModule(logger, db, config, socialClient, leaderboardCache, vm, sessionRegistry, matchRegistry, tracker, router, once, localCache, allMatchCreateFn, nil)
 	vm.PreloadModule("nakama", nakamaModule.Loader)
 
 	// Create the context to be used throughout this match.
@@ -119,7 +119,7 @@ func NewRuntime2LuaMatchCore(logger *zap.Logger, db *sql.DB, config Config, soci
 		return nil, errors.New("match_loop not found or not a function")
 	}
 
-	core := &Runtime2LuaMatchCore{
+	core := &RuntimeLuaMatchCore{
 		logger:        logger,
 		matchRegistry: matchRegistry,
 		tracker:       tracker,
@@ -155,7 +155,7 @@ func NewRuntime2LuaMatchCore(logger *zap.Logger, db *sql.DB, config Config, soci
 	return core, nil
 }
 
-func (r *Runtime2LuaMatchCore) MatchInit(params map[string]interface{}) (interface{}, int, string, error) {
+func (r *RuntimeLuaMatchCore) MatchInit(params map[string]interface{}) (interface{}, int, string, error) {
 	// Run the match_init sequence.
 	r.vm.Push(LSentinel)
 	r.vm.Push(r.initFn)
@@ -219,7 +219,7 @@ func (r *Runtime2LuaMatchCore) MatchInit(params map[string]interface{}) (interfa
 	return state, rateInt, labelStr, nil
 }
 
-func (r *Runtime2LuaMatchCore) MatchJoinAttempt(tick int64, state interface{}, userID, sessionID uuid.UUID, username, node string) (interface{}, bool, string, error) {
+func (r *RuntimeLuaMatchCore) MatchJoinAttempt(tick int64, state interface{}, userID, sessionID uuid.UUID, username, node string) (interface{}, bool, string, error) {
 	presence := r.vm.CreateTable(0, 4)
 	presence.RawSetString("user_id", lua.LString(userID.String()))
 	presence.RawSetString("session_id", lua.LString(sessionID.String()))
@@ -287,7 +287,7 @@ func (r *Runtime2LuaMatchCore) MatchJoinAttempt(tick int64, state interface{}, u
 	return newState, allow, reason, nil
 }
 
-func (r *Runtime2LuaMatchCore) MatchJoin(tick int64, state interface{}, joins []*MatchPresence) (interface{}, error) {
+func (r *RuntimeLuaMatchCore) MatchJoin(tick int64, state interface{}, joins []*MatchPresence) (interface{}, error) {
 	if r.joinFn == nil {
 		return state, nil
 	}
@@ -332,7 +332,7 @@ func (r *Runtime2LuaMatchCore) MatchJoin(tick int64, state interface{}, joins []
 	return newState, nil
 }
 
-func (r *Runtime2LuaMatchCore) MatchLeave(tick int64, state interface{}, leaves []*MatchPresence) (interface{}, error) {
+func (r *RuntimeLuaMatchCore) MatchLeave(tick int64, state interface{}, leaves []*MatchPresence) (interface{}, error) {
 	presences := r.vm.CreateTable(len(leaves), 0)
 	for i, p := range leaves {
 		presence := r.vm.CreateTable(0, 4)
@@ -373,7 +373,7 @@ func (r *Runtime2LuaMatchCore) MatchLeave(tick int64, state interface{}, leaves 
 	return newState, nil
 }
 
-func (r *Runtime2LuaMatchCore) MatchLoop(tick int64, state interface{}, inputCh chan *MatchDataMessage) (interface{}, error) {
+func (r *RuntimeLuaMatchCore) MatchLoop(tick int64, state interface{}, inputCh chan *MatchDataMessage) (interface{}, error) {
 	// Drain the input queue into a Lua table.
 	size := len(inputCh)
 	input := r.vm.CreateTable(size, 0)
@@ -428,7 +428,7 @@ func (r *Runtime2LuaMatchCore) MatchLoop(tick int64, state interface{}, inputCh 
 	return newState, nil
 }
 
-func (r *Runtime2LuaMatchCore) broadcastMessage(l *lua.LState) int {
+func (r *RuntimeLuaMatchCore) broadcastMessage(l *lua.LState) int {
 	opCode := l.CheckInt64(1)
 
 	var dataBytes []byte
@@ -584,7 +584,7 @@ func (r *Runtime2LuaMatchCore) broadcastMessage(l *lua.LState) int {
 	return 0
 }
 
-func (r *Runtime2LuaMatchCore) matchKick(l *lua.LState) int {
+func (r *RuntimeLuaMatchCore) matchKick(l *lua.LState) int {
 	input := l.OptTable(1, nil)
 	if input == nil {
 		return 0
@@ -650,7 +650,7 @@ func (r *Runtime2LuaMatchCore) matchKick(l *lua.LState) int {
 	return 0
 }
 
-func (r *Runtime2LuaMatchCore) matchLabelUpdate(l *lua.LState) int {
+func (r *RuntimeLuaMatchCore) matchLabelUpdate(l *lua.LState) int {
 	input := l.OptString(1, "")
 
 	r.labelUpdateFn(input)

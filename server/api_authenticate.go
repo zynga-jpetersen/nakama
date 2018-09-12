@@ -15,6 +15,9 @@
 package server
 
 import (
+	"go.opencensus.io/stats"
+	"go.opencensus.io/tag"
+	"go.opencensus.io/trace"
 	"math/rand"
 	"regexp"
 	"strings"
@@ -53,13 +56,56 @@ func (s *ApiServer) AuthenticateCustom(ctx context.Context, in *api.Authenticate
 
 	create := in.Create == nil || in.Create.Value
 
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateCustomFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.AuthenticateCustom"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	dbUserID, dbUsername, created, err := AuthenticateCustom(s.logger, s.db, in.Account.Id, username, create)
 	if err != nil {
 		return nil, err
 	}
 
-	token := generateToken(s.config, dbUserID, dbUsername)
-	return &api.Session{Created: created, Token: token}, nil
+	token, exp := generateToken(s.config, dbUserID, dbUsername)
+	session := &api.Session{Created: created, Token: token}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterAuthenticateCustomFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.AuthenticateCustom"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, dbUserID, dbUsername, exp, clientIP, clientPort, session)
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
+	return session, nil
 }
 
 func (s *ApiServer) AuthenticateDevice(ctx context.Context, in *api.AuthenticateDeviceRequest) (*api.Session, error) {
@@ -82,13 +128,56 @@ func (s *ApiServer) AuthenticateDevice(ctx context.Context, in *api.Authenticate
 
 	create := in.Create == nil || in.Create.Value
 
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateDeviceFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.AuthenticateDevice"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	dbUserID, dbUsername, created, err := AuthenticateDevice(s.logger, s.db, in.Account.Id, username, create)
 	if err != nil {
 		return nil, err
 	}
 
-	token := generateToken(s.config, dbUserID, dbUsername)
-	return &api.Session{Created: created, Token: token}, nil
+	token, exp := generateToken(s.config, dbUserID, dbUsername)
+	session := &api.Session{Created: created, Token: token}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterAuthenticateDeviceFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.AuthenticateDevice"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, dbUserID, dbUsername, exp, clientIP, clientPort, session)
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
+	return session, nil
 }
 
 func (s *ApiServer) AuthenticateEmail(ctx context.Context, in *api.AuthenticateEmailRequest) (*api.Session, error) {
@@ -118,13 +207,56 @@ func (s *ApiServer) AuthenticateEmail(ctx context.Context, in *api.AuthenticateE
 
 	create := in.Create == nil || in.Create.Value
 
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateEmailFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.AuthenticateEmail"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	dbUserID, dbUsername, created, err := AuthenticateEmail(s.logger, s.db, cleanEmail, email.Password, username, create)
 	if err != nil {
 		return nil, err
 	}
 
-	token := generateToken(s.config, dbUserID, dbUsername)
-	return &api.Session{Created: created, Token: token}, nil
+	token, exp := generateToken(s.config, dbUserID, dbUsername)
+	session := &api.Session{Created: created, Token: token}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterAuthenticateEmailFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.AuthenticateEmail"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, dbUserID, dbUsername, exp, clientIP, clientPort, session)
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
+	return session, nil
 }
 
 func (s *ApiServer) AuthenticateFacebook(ctx context.Context, in *api.AuthenticateFacebookRequest) (*api.Session, error) {
@@ -143,6 +275,30 @@ func (s *ApiServer) AuthenticateFacebook(ctx context.Context, in *api.Authentica
 
 	create := in.Create == nil || in.Create.Value
 
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateFacebookFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.AuthenticateFacebook"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	dbUserID, dbUsername, created, err := AuthenticateFacebook(s.logger, s.db, s.socialClient, in.Account.Token, username, create)
 	if err != nil {
 		return nil, err
@@ -153,8 +309,27 @@ func (s *ApiServer) AuthenticateFacebook(ctx context.Context, in *api.Authentica
 		importFacebookFriends(s.logger, s.db, s.router, s.socialClient, uuid.FromStringOrNil(dbUserID), dbUsername, in.Account.Token, false)
 	}
 
-	token := generateToken(s.config, dbUserID, dbUsername)
-	return &api.Session{Created: created, Token: token}, nil
+	token, exp := generateToken(s.config, dbUserID, dbUsername)
+	session := &api.Session{Created: created, Token: token}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterAuthenticateFacebookFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.AuthenticateFacebook"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, dbUserID, dbUsername, exp, clientIP, clientPort, session)
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
+	return session, nil
 }
 
 func (s *ApiServer) AuthenticateGameCenter(ctx context.Context, in *api.AuthenticateGameCenterRequest) (*api.Session, error) {
@@ -185,13 +360,56 @@ func (s *ApiServer) AuthenticateGameCenter(ctx context.Context, in *api.Authenti
 
 	create := in.Create == nil || in.Create.Value
 
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateGameCenterFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.AuthenticateGameCenter"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	dbUserID, dbUsername, created, err := AuthenticateGameCenter(s.logger, s.db, s.socialClient, in.Account.PlayerId, in.Account.BundleId, in.Account.TimestampSeconds, in.Account.Salt, in.Account.Signature, in.Account.PublicKeyUrl, username, create)
 	if err != nil {
 		return nil, err
 	}
 
-	token := generateToken(s.config, dbUserID, dbUsername)
-	return &api.Session{Created: created, Token: token}, nil
+	token, exp := generateToken(s.config, dbUserID, dbUsername)
+	session := &api.Session{Created: created, Token: token}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterAuthenticateGameCenterFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.AuthenticateGameCenter"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, dbUserID, dbUsername, exp, clientIP, clientPort, session)
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
+	return session, nil
 }
 
 func (s *ApiServer) AuthenticateGoogle(ctx context.Context, in *api.AuthenticateGoogleRequest) (*api.Session, error) {
@@ -210,13 +428,56 @@ func (s *ApiServer) AuthenticateGoogle(ctx context.Context, in *api.Authenticate
 
 	create := in.Create == nil || in.Create.Value
 
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateGoogleFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.AuthenticateGoogle"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	dbUserID, dbUsername, created, err := AuthenticateGoogle(s.logger, s.db, s.socialClient, in.Account.Token, username, create)
 	if err != nil {
 		return nil, err
 	}
 
-	token := generateToken(s.config, dbUserID, dbUsername)
-	return &api.Session{Created: created, Token: token}, nil
+	token, exp := generateToken(s.config, dbUserID, dbUsername)
+	session := &api.Session{Created: created, Token: token}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterAuthenticateGoogleFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.AuthenticateGoogle"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, dbUserID, dbUsername, exp, clientIP, clientPort, session)
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
+	return session, nil
 }
 
 func (s *ApiServer) AuthenticateSteam(ctx context.Context, in *api.AuthenticateSteamRequest) (*api.Session, error) {
@@ -239,28 +500,71 @@ func (s *ApiServer) AuthenticateSteam(ctx context.Context, in *api.AuthenticateS
 
 	create := in.Create == nil || in.Create.Value
 
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateSteamFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-before.Nakama.AuthenticateSteam"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	dbUserID, dbUsername, created, err := AuthenticateSteam(s.logger, s.db, s.socialClient, s.config.GetSocial().Steam.AppID, s.config.GetSocial().Steam.PublisherKey, in.Account.Token, username, create)
 	if err != nil {
 		return nil, err
 	}
 
-	token := generateToken(s.config, dbUserID, dbUsername)
-	return &api.Session{Created: created, Token: token}, nil
+	token, exp := generateToken(s.config, dbUserID, dbUsername)
+	session := &api.Session{Created: created, Token: token}
+
+	// After hook.
+	if fn := s.runtime.afterReqFunctions.afterAuthenticateSteamFunction; fn != nil {
+		// Stats measurement start boundary.
+		name := "nakama.api-after.Nakama.AuthenticateSteam"
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		fn(s.logger, dbUserID, dbUsername, exp, clientIP, clientPort, session)
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
+	return session, nil
 }
 
-func generateToken(config Config, userID, username string) string {
+func generateToken(config Config, userID, username string) (string, int64) {
 	exp := time.Now().UTC().Add(time.Duration(config.GetSession().TokenExpirySec) * time.Second).Unix()
 	return generateTokenWithExpiry(config, userID, username, exp)
 }
 
-func generateTokenWithExpiry(config Config, userID, username string, exp int64) string {
+func generateTokenWithExpiry(config Config, userID, username string, exp int64) (string, int64) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"uid": userID,
 		"exp": exp,
 		"usn": username,
 	})
 	signedToken, _ := token.SignedString([]byte(config.GetSession().EncryptionKey))
-	return signedToken
+	return signedToken, exp
 }
 
 func generateUsername() string {

@@ -22,10 +22,10 @@ import (
 	"log"
 )
 
-func InitModule(ctx context.Context, logger *log.Logger, db *sql.DB, nk runtime.NakamaModule, initialiser runtime.Initialiser) {
-	initialiser.RegisterRpc("go_echo_sample", rpcEcho)
-	initialiser.RegisterBeforeRt("ChannelJoin", beforeChannelJoin)
-	initialiser.RegisterMatch("match", func(ctx context.Context, logger *log.Logger, db *sql.DB, nk runtime.NakamaModule) (runtime.Match, error) {
+func InitModule(ctx context.Context, logger *log.Logger, db *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) {
+	initializer.RegisterRpc("go_echo_sample", rpcEcho)
+	initializer.RegisterBeforeRt("ChannelJoin", beforeChannelJoin)
+	initializer.RegisterMatch("match", func(ctx context.Context, logger *log.Logger, db *sql.DB, nk runtime.NakamaModule) (runtime.Match, error) {
 		return &Match{}, nil
 	})
 }
