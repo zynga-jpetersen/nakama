@@ -203,12 +203,12 @@ func NewRuntimeProviderLua(logger, startupLogger *zap.Logger, db *sql.DB, jsonpb
 				return runtimeProviderLua.Rpc(id, queryParams, userID, username, expiry, sessionID, clientIP, clientPort, payload)
 			}
 		case RuntimeExecutionModeBefore:
-			if strings.HasPrefix(strings.ToLower(RTAPI_PREFIX), id) {
+			if strings.HasPrefix(id, strings.ToLower(RTAPI_PREFIX)) {
 				beforeRtFunctions[id] = func(logger *zap.Logger, userID, username string, expiry int64, sessionID, clientIP, clientPort string, envelope *rtapi.Envelope) (*rtapi.Envelope, error) {
 					return runtimeProviderLua.BeforeRt(id, logger, userID, username, expiry, sessionID, clientIP, clientPort, envelope)
 				}
-			} else if strings.HasPrefix(strings.ToLower(API_PREFIX), id) {
-				shortId := strings.TrimPrefix(strings.ToLower(API_PREFIX), id)
+			} else if strings.HasPrefix(id, strings.ToLower(API_PREFIX)) {
+				shortId := strings.TrimPrefix(id, strings.ToLower(API_PREFIX))
 				switch shortId {
 				case "getaccount":
 					beforeReqFunctions.beforeGetAccountFunction = func(logger *zap.Logger, userID, username string, expiry int64, clientIP, clientPort string, in *empty.Empty) (*empty.Empty, error, codes.Code) {
@@ -621,12 +621,12 @@ func NewRuntimeProviderLua(logger, startupLogger *zap.Logger, db *sql.DB, jsonpb
 				}
 			}
 		case RuntimeExecutionModeAfter:
-			if strings.HasPrefix(strings.ToLower(RTAPI_PREFIX), id) {
+			if strings.HasPrefix(id, strings.ToLower(RTAPI_PREFIX)) {
 				afterRtFunctions[id] = func(logger *zap.Logger, userID, username string, expiry int64, sessionID, clientIP, clientPort string, envelope *rtapi.Envelope) error {
 					return runtimeProviderLua.AfterRt(id, logger, userID, username, expiry, sessionID, clientIP, clientPort, envelope)
 				}
-			} else if strings.HasPrefix(strings.ToLower(API_PREFIX), id) {
-				shortId := strings.TrimPrefix(strings.ToLower(API_PREFIX), id)
+			} else if strings.HasPrefix(id, strings.ToLower(API_PREFIX)) {
+				shortId := strings.TrimPrefix(id, strings.ToLower(API_PREFIX))
 				switch shortId {
 				case "getaccount":
 					afterReqFunctions.afterGetAccountFunction = func(logger *zap.Logger, userID, username string, expiry int64, clientIP, clientPort string, out *api.Account) error {

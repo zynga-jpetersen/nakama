@@ -15,6 +15,7 @@
 package server
 
 import (
+	"fmt"
 	"github.com/gofrs/uuid"
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/heroiclabs/nakama/api"
@@ -22,6 +23,7 @@ import (
 	"go.opencensus.io/stats"
 	"go.opencensus.io/tag"
 	"go.opencensus.io/trace"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -34,7 +36,8 @@ func (s *ApiServer) GetAccount(ctx context.Context, in *empty.Empty) (*api.Accou
 	// Before hook.
 	if fn := s.runtime.beforeReqFunctions.beforeGetAccountFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.GetAccount"
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -46,7 +49,9 @@ func (s *ApiServer) GetAccount(ctx context.Context, in *empty.Empty) (*api.Accou
 			return nil, status.Error(code, err.Error())
 		}
 		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod), zap.String("uid", userID.String()))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
 		}
 		in = result
 
@@ -66,7 +71,7 @@ func (s *ApiServer) GetAccount(ctx context.Context, in *empty.Empty) (*api.Accou
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterGetAccountFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.GetAccount"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -84,18 +89,13 @@ func (s *ApiServer) GetAccount(ctx context.Context, in *empty.Empty) (*api.Accou
 }
 
 func (s *ApiServer) UpdateAccount(ctx context.Context, in *api.UpdateAccountRequest) (*empty.Empty, error) {
-	username := in.GetUsername().GetValue()
-	if in.GetUsername() != nil {
-		if len(username) < 1 || len(username) > 128 {
-			return nil, status.Error(codes.InvalidArgument, "Username invalid, must be 1-128 bytes.")
-		}
-	}
 	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
 
 	// Before hook.
 	if fn := s.runtime.beforeReqFunctions.beforeUpdateAccountFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.UpdateAccount"
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -107,13 +107,22 @@ func (s *ApiServer) UpdateAccount(ctx context.Context, in *api.UpdateAccountRequ
 			return nil, status.Error(code, err.Error())
 		}
 		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod), zap.String("uid", userID.String()))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
 		}
 		in = result
 
 		// Stats measurement end boundary.
 		span.End()
 		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
+	username := in.GetUsername().GetValue()
+	if in.GetUsername() != nil {
+		if len(username) < 1 || len(username) > 128 {
+			return nil, status.Error(codes.InvalidArgument, "Username invalid, must be 1-128 bytes.")
+		}
 	}
 
 	err := UpdateAccount(s.db, s.logger, userID, username, in.GetDisplayName(), in.GetTimezone(), in.GetLocation(), in.GetLangTag(), in.GetAvatarUrl(), nil)
@@ -127,7 +136,7 @@ func (s *ApiServer) UpdateAccount(ctx context.Context, in *api.UpdateAccountRequ
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterUpdateAccountFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.UpdateAccount"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})

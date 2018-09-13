@@ -15,6 +15,7 @@
 package server
 
 import (
+	"fmt"
 	"github.com/gofrs/uuid"
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/heroiclabs/nakama/api"
@@ -34,7 +35,8 @@ func (s *ApiServer) ListFriends(ctx context.Context, in *empty.Empty) (*api.Frie
 	// Before hook.
 	if fn := s.runtime.beforeReqFunctions.beforeListFriendsFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.ListFriends"
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -46,7 +48,9 @@ func (s *ApiServer) ListFriends(ctx context.Context, in *empty.Empty) (*api.Frie
 			return nil, status.Error(code, err.Error())
 		}
 		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod), zap.String("uid", userID.String()))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
 		}
 		in = result
 
@@ -63,7 +67,7 @@ func (s *ApiServer) ListFriends(ctx context.Context, in *empty.Empty) (*api.Frie
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterListFriendsFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.ListFriends"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -81,11 +85,39 @@ func (s *ApiServer) ListFriends(ctx context.Context, in *empty.Empty) (*api.Frie
 }
 
 func (s *ApiServer) AddFriends(ctx context.Context, in *api.AddFriendsRequest) (*empty.Empty, error) {
+	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
+
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAddFriendsFunction; fn != nil {
+		// Stats measurement start boundary.
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod), zap.String("uid", userID.String()))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	if len(in.GetIds()) == 0 && len(in.GetUsernames()) == 0 {
 		return &empty.Empty{}, nil
 	}
 
-	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
 	username := ctx.Value(ctxUsernameKey{}).(string)
 
 	for _, id := range in.GetIds() {
@@ -113,30 +145,6 @@ func (s *ApiServer) AddFriends(ctx context.Context, in *api.AddFriendsRequest) (
 		return nil, status.Error(codes.InvalidArgument, "No valid ID or username was provided.")
 	}
 
-	// Before hook.
-	if fn := s.runtime.beforeReqFunctions.beforeAddFriendsFunction; fn != nil {
-		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.AddFriends"
-		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
-		startNanos := time.Now().UTC().UnixNano()
-		span := trace.NewSpan(name, nil, trace.StartOptions{})
-
-		// Extract request information and execute the hook.
-		clientIP, clientPort := extractClientAddress(s.logger, ctx)
-		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
-		if err != nil {
-			return nil, status.Error(code, err.Error())
-		}
-		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
-		}
-		in = result
-
-		// Stats measurement end boundary.
-		span.End()
-		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
-	}
-
 	allIDs := make([]string, 0, len(in.GetIds())+len(userIDs))
 	allIDs = append(allIDs, in.GetIds()...)
 	allIDs = append(allIDs, userIDs...)
@@ -148,7 +156,7 @@ func (s *ApiServer) AddFriends(ctx context.Context, in *api.AddFriendsRequest) (
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterAddFriendsFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.AddFriends"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -166,11 +174,39 @@ func (s *ApiServer) AddFriends(ctx context.Context, in *api.AddFriendsRequest) (
 }
 
 func (s *ApiServer) DeleteFriends(ctx context.Context, in *api.DeleteFriendsRequest) (*empty.Empty, error) {
+	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
+
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeDeleteFriendsFunction; fn != nil {
+		// Stats measurement start boundary.
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod), zap.String("uid", userID.String()))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	if len(in.GetIds()) == 0 && len(in.GetUsernames()) == 0 {
 		return &empty.Empty{}, nil
 	}
 
-	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
 	for _, id := range in.GetIds() {
 		if userID.String() == id {
 			return nil, status.Error(codes.InvalidArgument, "Cannot delete self.")
@@ -198,30 +234,6 @@ func (s *ApiServer) DeleteFriends(ctx context.Context, in *api.DeleteFriendsRequ
 		return &empty.Empty{}, nil
 	}
 
-	// Before hook.
-	if fn := s.runtime.beforeReqFunctions.beforeDeleteFriendsFunction; fn != nil {
-		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.DeleteFriends"
-		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
-		startNanos := time.Now().UTC().UnixNano()
-		span := trace.NewSpan(name, nil, trace.StartOptions{})
-
-		// Extract request information and execute the hook.
-		clientIP, clientPort := extractClientAddress(s.logger, ctx)
-		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
-		if err != nil {
-			return nil, status.Error(code, err.Error())
-		}
-		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
-		}
-		in = result
-
-		// Stats measurement end boundary.
-		span.End()
-		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
-	}
-
 	allIDs := make([]string, 0, len(in.GetIds())+len(userIDs))
 	allIDs = append(allIDs, in.GetIds()...)
 	allIDs = append(allIDs, userIDs...)
@@ -233,7 +245,7 @@ func (s *ApiServer) DeleteFriends(ctx context.Context, in *api.DeleteFriendsRequ
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterDeleteFriendsFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.DeleteFriends"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -251,11 +263,39 @@ func (s *ApiServer) DeleteFriends(ctx context.Context, in *api.DeleteFriendsRequ
 }
 
 func (s *ApiServer) BlockFriends(ctx context.Context, in *api.BlockFriendsRequest) (*empty.Empty, error) {
+	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
+
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeBlockFriendsFunction; fn != nil {
+		// Stats measurement start boundary.
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod), zap.String("uid", userID.String()))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	if len(in.GetIds()) == 0 && len(in.GetUsernames()) == 0 {
 		return &empty.Empty{}, nil
 	}
 
-	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
 	for _, id := range in.GetIds() {
 		if userID.String() == id {
 			return nil, status.Error(codes.InvalidArgument, "Cannot block self.")
@@ -282,30 +322,6 @@ func (s *ApiServer) BlockFriends(ctx context.Context, in *api.BlockFriendsReques
 		return nil, status.Error(codes.InvalidArgument, "No valid ID or username was provided.")
 	}
 
-	// Before hook.
-	if fn := s.runtime.beforeReqFunctions.beforeBlockFriendsFunction; fn != nil {
-		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.BlockFriends"
-		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
-		startNanos := time.Now().UTC().UnixNano()
-		span := trace.NewSpan(name, nil, trace.StartOptions{})
-
-		// Extract request information and execute the hook.
-		clientIP, clientPort := extractClientAddress(s.logger, ctx)
-		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
-		if err != nil {
-			return nil, status.Error(code, err.Error())
-		}
-		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
-		}
-		in = result
-
-		// Stats measurement end boundary.
-		span.End()
-		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
-	}
-
 	allIDs := make([]string, 0, len(in.GetIds())+len(userIDs))
 	allIDs = append(allIDs, in.GetIds()...)
 	allIDs = append(allIDs, userIDs...)
@@ -317,7 +333,7 @@ func (s *ApiServer) BlockFriends(ctx context.Context, in *api.BlockFriendsReques
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterBlockFriendsFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.BlockFriends"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -335,14 +351,11 @@ func (s *ApiServer) BlockFriends(ctx context.Context, in *api.BlockFriendsReques
 }
 
 func (s *ApiServer) ImportFacebookFriends(ctx context.Context, in *api.ImportFacebookFriendsRequest) (*empty.Empty, error) {
-	if in.Account == nil || in.Account.Token == "" {
-		return nil, status.Error(codes.InvalidArgument, "Facebook token is required.")
-	}
-
 	// Before hook.
 	if fn := s.runtime.beforeReqFunctions.beforeImportFacebookFriendsFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.ImportFacebookFriends"
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -354,13 +367,19 @@ func (s *ApiServer) ImportFacebookFriends(ctx context.Context, in *api.ImportFac
 			return nil, status.Error(code, err.Error())
 		}
 		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod), zap.String("uid", ctx.Value(ctxUserIDKey{}).(uuid.UUID).String()))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
 		}
 		in = result
 
 		// Stats measurement end boundary.
 		span.End()
 		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
+	if in.Account == nil || in.Account.Token == "" {
+		return nil, status.Error(codes.InvalidArgument, "Facebook token is required.")
 	}
 
 	err := importFacebookFriends(s.logger, s.db, s.router, s.socialClient, ctx.Value(ctxUserIDKey{}).(uuid.UUID), ctx.Value(ctxUsernameKey{}).(string), in.Account.Token, in.Reset_ != nil && in.Reset_.Value)
@@ -372,7 +391,7 @@ func (s *ApiServer) ImportFacebookFriends(ctx context.Context, in *api.ImportFac
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterImportFacebookFriendsFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.ImportFacebookFriends"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})

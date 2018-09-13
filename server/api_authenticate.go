@@ -15,9 +15,11 @@
 package server
 
 import (
+	"fmt"
 	"go.opencensus.io/stats"
 	"go.opencensus.io/tag"
 	"go.opencensus.io/trace"
+	"go.uber.org/zap"
 	"math/rand"
 	"regexp"
 	"strings"
@@ -37,6 +39,33 @@ var (
 )
 
 func (s *ApiServer) AuthenticateCustom(ctx context.Context, in *api.AuthenticateCustomRequest) (*api.Session, error) {
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateCustomFunction; fn != nil {
+		// Stats measurement start boundary.
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	if in.Account == nil || in.Account.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "Custom ID is required.")
 	} else if invalidCharsRegex.MatchString(in.Account.Id) {
@@ -56,30 +85,6 @@ func (s *ApiServer) AuthenticateCustom(ctx context.Context, in *api.Authenticate
 
 	create := in.Create == nil || in.Create.Value
 
-	// Before hook.
-	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateCustomFunction; fn != nil {
-		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.AuthenticateCustom"
-		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
-		startNanos := time.Now().UTC().UnixNano()
-		span := trace.NewSpan(name, nil, trace.StartOptions{})
-
-		// Extract request information and execute the hook.
-		clientIP, clientPort := extractClientAddress(s.logger, ctx)
-		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
-		if err != nil {
-			return nil, status.Error(code, err.Error())
-		}
-		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
-		}
-		in = result
-
-		// Stats measurement end boundary.
-		span.End()
-		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
-	}
-
 	dbUserID, dbUsername, created, err := AuthenticateCustom(s.logger, s.db, in.Account.Id, username, create)
 	if err != nil {
 		return nil, err
@@ -91,7 +96,7 @@ func (s *ApiServer) AuthenticateCustom(ctx context.Context, in *api.Authenticate
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterAuthenticateCustomFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.AuthenticateCustom"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -109,6 +114,33 @@ func (s *ApiServer) AuthenticateCustom(ctx context.Context, in *api.Authenticate
 }
 
 func (s *ApiServer) AuthenticateDevice(ctx context.Context, in *api.AuthenticateDeviceRequest) (*api.Session, error) {
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateDeviceFunction; fn != nil {
+		// Stats measurement start boundary.
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	if in.Account == nil || in.Account.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "Device ID is required.")
 	} else if invalidCharsRegex.MatchString(in.Account.Id) {
@@ -128,30 +160,6 @@ func (s *ApiServer) AuthenticateDevice(ctx context.Context, in *api.Authenticate
 
 	create := in.Create == nil || in.Create.Value
 
-	// Before hook.
-	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateDeviceFunction; fn != nil {
-		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.AuthenticateDevice"
-		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
-		startNanos := time.Now().UTC().UnixNano()
-		span := trace.NewSpan(name, nil, trace.StartOptions{})
-
-		// Extract request information and execute the hook.
-		clientIP, clientPort := extractClientAddress(s.logger, ctx)
-		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
-		if err != nil {
-			return nil, status.Error(code, err.Error())
-		}
-		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
-		}
-		in = result
-
-		// Stats measurement end boundary.
-		span.End()
-		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
-	}
-
 	dbUserID, dbUsername, created, err := AuthenticateDevice(s.logger, s.db, in.Account.Id, username, create)
 	if err != nil {
 		return nil, err
@@ -163,7 +171,7 @@ func (s *ApiServer) AuthenticateDevice(ctx context.Context, in *api.Authenticate
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterAuthenticateDeviceFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.AuthenticateDevice"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -181,6 +189,33 @@ func (s *ApiServer) AuthenticateDevice(ctx context.Context, in *api.Authenticate
 }
 
 func (s *ApiServer) AuthenticateEmail(ctx context.Context, in *api.AuthenticateEmailRequest) (*api.Session, error) {
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateEmailFunction; fn != nil {
+		// Stats measurement start boundary.
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	email := in.Account
 	if email == nil || email.Email == "" || email.Password == "" {
 		return nil, status.Error(codes.InvalidArgument, "Email address and password is required.")
@@ -207,30 +242,6 @@ func (s *ApiServer) AuthenticateEmail(ctx context.Context, in *api.AuthenticateE
 
 	create := in.Create == nil || in.Create.Value
 
-	// Before hook.
-	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateEmailFunction; fn != nil {
-		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.AuthenticateEmail"
-		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
-		startNanos := time.Now().UTC().UnixNano()
-		span := trace.NewSpan(name, nil, trace.StartOptions{})
-
-		// Extract request information and execute the hook.
-		clientIP, clientPort := extractClientAddress(s.logger, ctx)
-		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
-		if err != nil {
-			return nil, status.Error(code, err.Error())
-		}
-		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
-		}
-		in = result
-
-		// Stats measurement end boundary.
-		span.End()
-		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
-	}
-
 	dbUserID, dbUsername, created, err := AuthenticateEmail(s.logger, s.db, cleanEmail, email.Password, username, create)
 	if err != nil {
 		return nil, err
@@ -242,7 +253,7 @@ func (s *ApiServer) AuthenticateEmail(ctx context.Context, in *api.AuthenticateE
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterAuthenticateEmailFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.AuthenticateEmail"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -260,6 +271,33 @@ func (s *ApiServer) AuthenticateEmail(ctx context.Context, in *api.AuthenticateE
 }
 
 func (s *ApiServer) AuthenticateFacebook(ctx context.Context, in *api.AuthenticateFacebookRequest) (*api.Session, error) {
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateFacebookFunction; fn != nil {
+		// Stats measurement start boundary.
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	if in.Account == nil || in.Account.Token == "" {
 		return nil, status.Error(codes.InvalidArgument, "Facebook access token is required.")
 	}
@@ -274,30 +312,6 @@ func (s *ApiServer) AuthenticateFacebook(ctx context.Context, in *api.Authentica
 	}
 
 	create := in.Create == nil || in.Create.Value
-
-	// Before hook.
-	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateFacebookFunction; fn != nil {
-		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.AuthenticateFacebook"
-		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
-		startNanos := time.Now().UTC().UnixNano()
-		span := trace.NewSpan(name, nil, trace.StartOptions{})
-
-		// Extract request information and execute the hook.
-		clientIP, clientPort := extractClientAddress(s.logger, ctx)
-		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
-		if err != nil {
-			return nil, status.Error(code, err.Error())
-		}
-		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
-		}
-		in = result
-
-		// Stats measurement end boundary.
-		span.End()
-		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
-	}
 
 	dbUserID, dbUsername, created, err := AuthenticateFacebook(s.logger, s.db, s.socialClient, in.Account.Token, username, create)
 	if err != nil {
@@ -315,7 +329,7 @@ func (s *ApiServer) AuthenticateFacebook(ctx context.Context, in *api.Authentica
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterAuthenticateFacebookFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.AuthenticateFacebook"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -333,6 +347,33 @@ func (s *ApiServer) AuthenticateFacebook(ctx context.Context, in *api.Authentica
 }
 
 func (s *ApiServer) AuthenticateGameCenter(ctx context.Context, in *api.AuthenticateGameCenterRequest) (*api.Session, error) {
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateGameCenterFunction; fn != nil {
+		// Stats measurement start boundary.
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	if in.Account == nil {
 		return nil, status.Error(codes.InvalidArgument, "GameCenter access credentials are required.")
 	} else if in.Account.BundleId == "" {
@@ -360,30 +401,6 @@ func (s *ApiServer) AuthenticateGameCenter(ctx context.Context, in *api.Authenti
 
 	create := in.Create == nil || in.Create.Value
 
-	// Before hook.
-	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateGameCenterFunction; fn != nil {
-		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.AuthenticateGameCenter"
-		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
-		startNanos := time.Now().UTC().UnixNano()
-		span := trace.NewSpan(name, nil, trace.StartOptions{})
-
-		// Extract request information and execute the hook.
-		clientIP, clientPort := extractClientAddress(s.logger, ctx)
-		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
-		if err != nil {
-			return nil, status.Error(code, err.Error())
-		}
-		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
-		}
-		in = result
-
-		// Stats measurement end boundary.
-		span.End()
-		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
-	}
-
 	dbUserID, dbUsername, created, err := AuthenticateGameCenter(s.logger, s.db, s.socialClient, in.Account.PlayerId, in.Account.BundleId, in.Account.TimestampSeconds, in.Account.Salt, in.Account.Signature, in.Account.PublicKeyUrl, username, create)
 	if err != nil {
 		return nil, err
@@ -395,7 +412,7 @@ func (s *ApiServer) AuthenticateGameCenter(ctx context.Context, in *api.Authenti
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterAuthenticateGameCenterFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.AuthenticateGameCenter"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -413,6 +430,33 @@ func (s *ApiServer) AuthenticateGameCenter(ctx context.Context, in *api.Authenti
 }
 
 func (s *ApiServer) AuthenticateGoogle(ctx context.Context, in *api.AuthenticateGoogleRequest) (*api.Session, error) {
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateGoogleFunction; fn != nil {
+		// Stats measurement start boundary.
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	if in.Account == nil || in.Account.Token == "" {
 		return nil, status.Error(codes.InvalidArgument, "Google access token is required.")
 	}
@@ -428,30 +472,6 @@ func (s *ApiServer) AuthenticateGoogle(ctx context.Context, in *api.Authenticate
 
 	create := in.Create == nil || in.Create.Value
 
-	// Before hook.
-	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateGoogleFunction; fn != nil {
-		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.AuthenticateGoogle"
-		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
-		startNanos := time.Now().UTC().UnixNano()
-		span := trace.NewSpan(name, nil, trace.StartOptions{})
-
-		// Extract request information and execute the hook.
-		clientIP, clientPort := extractClientAddress(s.logger, ctx)
-		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
-		if err != nil {
-			return nil, status.Error(code, err.Error())
-		}
-		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
-		}
-		in = result
-
-		// Stats measurement end boundary.
-		span.End()
-		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
-	}
-
 	dbUserID, dbUsername, created, err := AuthenticateGoogle(s.logger, s.db, s.socialClient, in.Account.Token, username, create)
 	if err != nil {
 		return nil, err
@@ -463,7 +483,7 @@ func (s *ApiServer) AuthenticateGoogle(ctx context.Context, in *api.Authenticate
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterAuthenticateGoogleFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.AuthenticateGoogle"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -481,6 +501,33 @@ func (s *ApiServer) AuthenticateGoogle(ctx context.Context, in *api.Authenticate
 }
 
 func (s *ApiServer) AuthenticateSteam(ctx context.Context, in *api.AuthenticateSteamRequest) (*api.Session, error) {
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateSteamFunction; fn != nil {
+		// Stats measurement start boundary.
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	if s.config.GetSocial().Steam.PublisherKey == "" || s.config.GetSocial().Steam.AppID == 0 {
 		return nil, status.Error(codes.FailedPrecondition, "Steam authentication is not configured.")
 	}
@@ -500,30 +547,6 @@ func (s *ApiServer) AuthenticateSteam(ctx context.Context, in *api.AuthenticateS
 
 	create := in.Create == nil || in.Create.Value
 
-	// Before hook.
-	if fn := s.runtime.beforeReqFunctions.beforeAuthenticateSteamFunction; fn != nil {
-		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.AuthenticateSteam"
-		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
-		startNanos := time.Now().UTC().UnixNano()
-		span := trace.NewSpan(name, nil, trace.StartOptions{})
-
-		// Extract request information and execute the hook.
-		clientIP, clientPort := extractClientAddress(s.logger, ctx)
-		result, err, code := fn(s.logger, "", "", 0, clientIP, clientPort, in)
-		if err != nil {
-			return nil, status.Error(code, err.Error())
-		}
-		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
-		}
-		in = result
-
-		// Stats measurement end boundary.
-		span.End()
-		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
-	}
-
 	dbUserID, dbUsername, created, err := AuthenticateSteam(s.logger, s.db, s.socialClient, s.config.GetSocial().Steam.AppID, s.config.GetSocial().Steam.PublisherKey, in.Account.Token, username, create)
 	if err != nil {
 		return nil, err
@@ -535,7 +558,7 @@ func (s *ApiServer) AuthenticateSteam(ctx context.Context, in *api.AuthenticateS
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterAuthenticateSteamFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.AuthenticateSteam"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})

@@ -56,6 +56,8 @@ type ctxUserIDKey struct{}
 type ctxUsernameKey struct{}
 type ctxExpiryKey struct{}
 
+type ctxFullMethodKey struct{}
+
 type ApiServer struct {
 	logger            *zap.Logger
 	db                *sql.DB
@@ -333,7 +335,7 @@ func securityInterceptorFunc(logger *zap.Logger, config Config, ctx context.Cont
 		}
 		ctx = context.WithValue(context.WithValue(context.WithValue(ctx, ctxUserIDKey{}, userID), ctxUsernameKey{}, username), ctxExpiryKey{}, exp)
 	}
-	return ctx, nil
+	return context.WithValue(ctx, ctxFullMethodKey{}, info.FullMethod), nil
 }
 
 func parseBasicAuth(auth string) (username, password string, ok bool) {

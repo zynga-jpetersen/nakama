@@ -146,7 +146,7 @@ func (p *Pipeline) ProcessRequest(logger *zap.Logger, session Session, envelope 
 
 		if fn := p.runtime.BeforeRt(messageNameID); fn != nil {
 			// Stats measurement start boundary.
-			name := fmt.Sprintf("nakama.rtapi-before.%v", pipelineName)
+			name := fmt.Sprintf("nakama.rtapi.%v-before", pipelineName)
 			statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 			startNanos := time.Now().UTC().UnixNano()
 			span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -194,7 +194,7 @@ func (p *Pipeline) ProcessRequest(logger *zap.Logger, session Session, envelope 
 	if messageName != "" {
 		if fn := p.runtime.AfterRt(messageNameID); fn != nil {
 			// Stats measurement start boundary.
-			name := fmt.Sprintf("nakama.rtapi-after.%v", pipelineName)
+			name := fmt.Sprintf("nakama.rtapi.%v-after", pipelineName)
 			statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 			startNanos := time.Now().UTC().UnixNano()
 			span := trace.NewSpan(name, nil, trace.StartOptions{})

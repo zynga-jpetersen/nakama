@@ -203,10 +203,10 @@ func (n *RuntimeLuaNakamaModule) registerRPC(l *lua.LState) int {
 	id = strings.ToLower(id)
 
 	rc := l.Context().Value(RUNTIME_LUA_CALLBACKS).(*RuntimeLuaCallbacks)
-	if _, ok := rc.RPC[id]; ok {
-		//l.RaiseError("rpc id already registered")
-		return 0
-	}
+	//if _, ok := rc.RPC[id]; ok {
+	//	l.RaiseError("rpc id already registered")
+	//	return 0
+	//}
 	rc.RPC[id] = fn
 	if n.announceCallback != nil {
 		n.announceCallback(RuntimeExecutionModeRPC, id)
@@ -226,10 +226,10 @@ func (n *RuntimeLuaNakamaModule) registerReqBefore(l *lua.LState) int {
 	id = strings.ToLower(API_PREFIX + id)
 
 	rc := l.Context().Value(RUNTIME_LUA_CALLBACKS).(*RuntimeLuaCallbacks)
-	if _, ok := rc.Before[id]; ok {
-		//l.RaiseError("before id already registered")
-		return 0
-	}
+	//if _, ok := rc.Before[id]; ok {
+	//	l.RaiseError("before id already registered")
+	//	return 0
+	//}
 	rc.Before[id] = fn
 	if n.announceCallback != nil {
 		n.announceCallback(RuntimeExecutionModeBefore, id)
@@ -249,10 +249,10 @@ func (n *RuntimeLuaNakamaModule) registerReqAfter(l *lua.LState) int {
 	id = strings.ToLower(API_PREFIX + id)
 
 	rc := l.Context().Value(RUNTIME_LUA_CALLBACKS).(*RuntimeLuaCallbacks)
-	if _, ok := rc.After[id]; ok {
-		//l.RaiseError("after id already registered")
-		return 0
-	}
+	//if _, ok := rc.After[id]; ok {
+	//	l.RaiseError("after id already registered")
+	//	return 0
+	//}
 	rc.After[id] = fn
 	if n.announceCallback != nil {
 		n.announceCallback(RuntimeExecutionModeAfter, id)
@@ -272,10 +272,10 @@ func (n *RuntimeLuaNakamaModule) registerRTBefore(l *lua.LState) int {
 	id = strings.ToLower(RTAPI_PREFIX + id)
 
 	rc := l.Context().Value(RUNTIME_LUA_CALLBACKS).(*RuntimeLuaCallbacks)
-	if _, ok := rc.Before[id]; ok {
-		//l.RaiseError("before id already registered")
-		return 0
-	}
+	//if _, ok := rc.Before[id]; ok {
+	//	l.RaiseError("before id already registered")
+	//	return 0
+	//}
 	rc.Before[id] = fn
 	if n.announceCallback != nil {
 		n.announceCallback(RuntimeExecutionModeBefore, id)

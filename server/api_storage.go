@@ -16,9 +16,11 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"go.opencensus.io/stats"
 	"go.opencensus.io/tag"
 	"go.opencensus.io/trace"
+	"go.uber.org/zap"
 	"time"
 
 	"github.com/gofrs/uuid"
@@ -30,28 +32,13 @@ import (
 )
 
 func (s *ApiServer) ListStorageObjects(ctx context.Context, in *api.ListStorageObjectsRequest) (*api.StorageObjectList, error) {
-	limit := 1
-	if in.GetLimit() != nil {
-		if in.GetLimit().Value < 1 || in.GetLimit().Value > 100 {
-			return nil, status.Error(codes.InvalidArgument, "Invalid limit - limit must be between 1 and 100.")
-		}
-		limit = int(in.GetLimit().Value)
-	}
-
 	caller := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
-	userID := uuid.Nil
-	if in.GetUserId() != "" {
-		uid, err := uuid.FromString(in.GetUserId())
-		if err != nil {
-			return nil, status.Error(codes.InvalidArgument, "Invalid user ID - make sure user ID is a valid UUID.")
-		}
-		userID = uid
-	}
 
 	// Before hook.
 	if fn := s.runtime.beforeReqFunctions.beforeListStorageObjectsFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.ListStorageObjects"
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -63,13 +50,32 @@ func (s *ApiServer) ListStorageObjects(ctx context.Context, in *api.ListStorageO
 			return nil, status.Error(code, err.Error())
 		}
 		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod), zap.String("uid", caller.String()))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
 		}
 		in = result
 
 		// Stats measurement end boundary.
 		span.End()
 		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
+	limit := 1
+	if in.GetLimit() != nil {
+		if in.GetLimit().Value < 1 || in.GetLimit().Value > 100 {
+			return nil, status.Error(codes.InvalidArgument, "Invalid limit - limit must be between 1 and 100.")
+		}
+		limit = int(in.GetLimit().Value)
+	}
+
+	userID := uuid.Nil
+	if in.GetUserId() != "" {
+		uid, err := uuid.FromString(in.GetUserId())
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, "Invalid user ID - make sure user ID is a valid UUID.")
+		}
+		userID = uid
 	}
 
 	storageObjectList, code, listingError := StorageListObjects(s.logger, s.db, caller, userID, in.GetCollection(), limit, in.GetCursor())
@@ -84,7 +90,7 @@ func (s *ApiServer) ListStorageObjects(ctx context.Context, in *api.ListStorageO
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterListStorageObjectsFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.ListStorageObjects"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -102,6 +108,35 @@ func (s *ApiServer) ListStorageObjects(ctx context.Context, in *api.ListStorageO
 }
 
 func (s *ApiServer) ReadStorageObjects(ctx context.Context, in *api.ReadStorageObjectsRequest) (*api.StorageObjects, error) {
+	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
+
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeReadStorageObjectsFunction; fn != nil {
+		// Stats measurement start boundary.
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod), zap.String("uid", userID.String()))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	if in.GetObjectIds() == nil || len(in.GetObjectIds()) == 0 {
 		return &api.StorageObjects{}, nil
 	}
@@ -118,32 +153,6 @@ func (s *ApiServer) ReadStorageObjects(ctx context.Context, in *api.ReadStorageO
 		}
 	}
 
-	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
-
-	// Before hook.
-	if fn := s.runtime.beforeReqFunctions.beforeReadStorageObjectsFunction; fn != nil {
-		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.ReadStorageObjects"
-		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
-		startNanos := time.Now().UTC().UnixNano()
-		span := trace.NewSpan(name, nil, trace.StartOptions{})
-
-		// Extract request information and execute the hook.
-		clientIP, clientPort := extractClientAddress(s.logger, ctx)
-		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
-		if err != nil {
-			return nil, status.Error(code, err.Error())
-		}
-		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
-		}
-		in = result
-
-		// Stats measurement end boundary.
-		span.End()
-		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
-	}
-
 	objects, err := StorageReadObjects(s.logger, s.db, userID, in.GetObjectIds())
 	if err != nil {
 		return nil, status.Error(codes.Internal, "Error reading storage objects.")
@@ -152,7 +161,7 @@ func (s *ApiServer) ReadStorageObjects(ctx context.Context, in *api.ReadStorageO
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterReadStorageObjectsFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.ReadStorageObjects"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -170,6 +179,35 @@ func (s *ApiServer) ReadStorageObjects(ctx context.Context, in *api.ReadStorageO
 }
 
 func (s *ApiServer) WriteStorageObjects(ctx context.Context, in *api.WriteStorageObjectsRequest) (*api.StorageObjectAcks, error) {
+	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
+
+	// Before hook.
+	if fn := s.runtime.beforeReqFunctions.beforeWriteStorageObjectsFunction; fn != nil {
+		// Stats measurement start boundary.
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
+		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
+		startNanos := time.Now().UTC().UnixNano()
+		span := trace.NewSpan(name, nil, trace.StartOptions{})
+
+		// Extract request information and execute the hook.
+		clientIP, clientPort := extractClientAddress(s.logger, ctx)
+		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
+		if err != nil {
+			return nil, status.Error(code, err.Error())
+		}
+		if result == nil {
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod), zap.String("uid", ctx.Value(ctxUsernameKey{}).(string)))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
+		}
+		in = result
+
+		// Stats measurement end boundary.
+		span.End()
+		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
+	}
+
 	if in.GetObjects() == nil || len(in.GetObjects()) == 0 {
 		return &api.StorageObjectAcks{}, nil
 	}
@@ -199,32 +237,7 @@ func (s *ApiServer) WriteStorageObjects(ctx context.Context, in *api.WriteStorag
 		}
 	}
 
-	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
 	userObjects := map[uuid.UUID][]*api.WriteStorageObject{userID: in.GetObjects()}
-
-	// Before hook.
-	if fn := s.runtime.beforeReqFunctions.beforeWriteStorageObjectsFunction; fn != nil {
-		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.WriteStorageObjects"
-		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
-		startNanos := time.Now().UTC().UnixNano()
-		span := trace.NewSpan(name, nil, trace.StartOptions{})
-
-		// Extract request information and execute the hook.
-		clientIP, clientPort := extractClientAddress(s.logger, ctx)
-		result, err, code := fn(s.logger, userID.String(), ctx.Value(ctxUsernameKey{}).(string), ctx.Value(ctxExpiryKey{}).(int64), clientIP, clientPort, in)
-		if err != nil {
-			return nil, status.Error(code, err.Error())
-		}
-		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
-		}
-		in = result
-
-		// Stats measurement end boundary.
-		span.End()
-		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
-	}
 
 	acks, code, err := StorageWriteObjects(s.logger, s.db, false, userObjects)
 	if err != nil {
@@ -237,7 +250,7 @@ func (s *ApiServer) WriteStorageObjects(ctx context.Context, in *api.WriteStorag
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterWriteStorageObjectsFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.WriteStorageObjects"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -255,23 +268,13 @@ func (s *ApiServer) WriteStorageObjects(ctx context.Context, in *api.WriteStorag
 }
 
 func (s *ApiServer) DeleteStorageObjects(ctx context.Context, in *api.DeleteStorageObjectsRequest) (*empty.Empty, error) {
-	if in.GetObjectIds() == nil || len(in.GetObjectIds()) == 0 {
-		return &empty.Empty{}, nil
-	}
-
-	for _, objectID := range in.GetObjectIds() {
-		if objectID.GetCollection() == "" || objectID.GetKey() == "" {
-			return nil, status.Error(codes.InvalidArgument, "Invalid collection or key value supplied. They must be set.")
-		}
-	}
-
 	userID := ctx.Value(ctxUserIDKey{}).(uuid.UUID)
-	objectIDs := map[uuid.UUID][]*api.DeleteStorageObjectId{userID: in.GetObjectIds()}
 
 	// Before hook.
 	if fn := s.runtime.beforeReqFunctions.beforeDeleteStorageObjectsFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-before.Nakama.DeleteStorageObjects"
+		fullMethod := ctx.Value(ctxFullMethodKey{}).(string)
+		name := fmt.Sprintf("%v-before", fullMethod)
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
@@ -283,7 +286,9 @@ func (s *ApiServer) DeleteStorageObjects(ctx context.Context, in *api.DeleteStor
 			return nil, status.Error(code, err.Error())
 		}
 		if result == nil {
-			return nil, status.Error(codes.Internal, "Runtime Before hook returned no result.")
+			// If result is nil, requested resource is disabled.
+			s.logger.Warn("Intercepted a disabled resource.", zap.Any("resource", fullMethod), zap.String("uid", userID.String()))
+			return nil, status.Error(codes.NotFound, "Requested resource was not found.")
 		}
 		in = result
 
@@ -291,6 +296,18 @@ func (s *ApiServer) DeleteStorageObjects(ctx context.Context, in *api.DeleteStor
 		span.End()
 		stats.Record(statsCtx, MetricsApiTimeSpentMsec.M(float64(time.Now().UTC().UnixNano()-startNanos)/1000), MetricsApiCount.M(1))
 	}
+
+	if in.GetObjectIds() == nil || len(in.GetObjectIds()) == 0 {
+		return &empty.Empty{}, nil
+	}
+
+	for _, objectID := range in.GetObjectIds() {
+		if objectID.GetCollection() == "" || objectID.GetKey() == "" {
+			return nil, status.Error(codes.InvalidArgument, "Invalid collection or key value supplied. They must be set.")
+		}
+	}
+
+	objectIDs := map[uuid.UUID][]*api.DeleteStorageObjectId{userID: in.GetObjectIds()}
 
 	if code, err := StorageDeleteObjects(s.logger, s.db, false, objectIDs); err != nil {
 		if code == codes.Internal {
@@ -302,7 +319,7 @@ func (s *ApiServer) DeleteStorageObjects(ctx context.Context, in *api.DeleteStor
 	// After hook.
 	if fn := s.runtime.afterReqFunctions.afterDeleteStorageObjectsFunction; fn != nil {
 		// Stats measurement start boundary.
-		name := "nakama.api-after.Nakama.DeleteStorageObjects"
+		name := fmt.Sprintf("%v-after", ctx.Value(ctxFullMethodKey{}).(string))
 		statsCtx, _ := tag.New(context.Background(), tag.Upsert(MetricsFunction, name))
 		startNanos := time.Now().UTC().UnixNano()
 		span := trace.NewSpan(name, nil, trace.StartOptions{})
