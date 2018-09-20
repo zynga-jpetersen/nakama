@@ -4098,3 +4098,4 @@ func (n *RuntimeLuaNakamaModule) accountUpdateId(l *lua.LState) int {
 
 	return 0
 }
+
